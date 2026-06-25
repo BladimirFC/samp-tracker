@@ -1,4 +1,7 @@
 export const runtime = "nodejs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // ─── IN-MEMORY STORAGE ────────────────────────────────────────────
 
@@ -19,6 +22,8 @@ const ROLE_COLORS: Record<string, { color: string; bg: string }> = {
   Tester: { color: "#58a6ff", bg: "rgba(88,166,255,0.15)" },
 };
 
+const DATA_FILE = join(tmpdir(), "samp-tracker-data.json");
+
 let nextUserId = 2, nextCommentId = 1, nextAttachmentId = 1, nextTagId = 1, nextNotifId = 1, reportCounter = 1, patchCounter = 1;
 
 const users: User[] = [{
@@ -36,6 +41,41 @@ const tags: Tag[] = [
 const notifications: NotificationItem[] = [];
 const kvSettings: Record<string, string> = {};
 if (tags.length > 0) nextTagId = Math.max(...tags.map(t => t.id)) + 1;
+
+// ─── PERSISTENCE ──────────────────────────────────────────────────
+
+function saveData() {
+  try {
+    writeFileSync(DATA_FILE, JSON.stringify({
+      nextUserId, nextCommentId, nextAttachmentId, nextTagId, nextNotifId,
+      reportCounter, patchCounter,
+      users, reports, patches, tags, notifications, kvSettings,
+    }));
+  } catch { /* ignore write errors */ }
+}
+
+function loadData() {
+  try {
+    if (existsSync(DATA_FILE)) {
+      const d = JSON.parse(readFileSync(DATA_FILE, "utf-8"));
+      if (d.nextUserId) nextUserId = d.nextUserId;
+      if (d.nextCommentId) nextCommentId = d.nextCommentId;
+      if (d.nextAttachmentId) nextAttachmentId = d.nextAttachmentId;
+      if (d.nextTagId) nextTagId = d.nextTagId;
+      if (d.nextNotifId) nextNotifId = d.nextNotifId;
+      if (d.reportCounter) reportCounter = d.reportCounter;
+      if (d.patchCounter) patchCounter = d.patchCounter;
+      if (d.users) { users.length = 0; users.push(...d.users); }
+      if (d.reports) { reports.length = 0; reports.push(...d.reports); }
+      if (d.patches) { patches.length = 0; patches.push(...d.patches); }
+      if (d.tags) { tags.length = 0; tags.push(...d.tags); }
+      if (d.notifications) { notifications.length = 0; notifications.push(...d.notifications); }
+      if (d.kvSettings) Object.assign(kvSettings, d.kvSettings);
+    }
+  } catch { /* ignore load errors */ }
+}
+
+loadData();
 
 // ─── HELPERS ──────────────────────────────────────────────────────
 
@@ -268,6 +308,8 @@ async function handleAll(req: Request): Promise<Response> {
     return nf();
   } catch (e: unknown) {
     return r({ error: e instanceof Error ? e.message : "Error del servidor" }, 500);
+  } finally {
+    if (method === "POST" || method === "PUT" || method === "DELETE" || method === "PATCH") saveData();
   }
 }
 
