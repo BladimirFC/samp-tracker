@@ -170,9 +170,8 @@ function addNotification(type: string, message: string, reportId: string, userna
 // ─── ROUTER ───────────────────────────────────────────────────────
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const rawPath = req.query.path;
-  const path: string[] = Array.isArray(rawPath) ? rawPath : rawPath ? [rawPath] : [];
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
+  const path = url.pathname.replace(/^\/api\/?/, "").split("/").filter(Boolean);
   const method = req.method || "GET";
   let body: Record<string, unknown> = {};
 
