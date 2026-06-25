@@ -4,6 +4,6 @@
   "devCommand": "npm run dev",
   "installCommand": "npm install --legacy-peer-deps",
   "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
