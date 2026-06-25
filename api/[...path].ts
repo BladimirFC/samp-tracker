@@ -689,3 +689,8 @@ function handleMetrics(res: VercelResponse) {
 
   return json(res, { solved7, avgResolutionDays, days, byStatus, byPriority, byDev });
 }
+
+export const GET = handler;
+export const POST = handler;
+export const PUT = handler;
+export const DELETE = handler;
