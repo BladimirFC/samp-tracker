@@ -2170,7 +2170,12 @@ async function initApp() {
   usersCache = await api('/users');
   await loadTags();
 
-  document.getElementById('sidebar-avatar').textContent = currentUser.name[0];
+  const avatarEl = document.getElementById('sidebar-avatar');
+  if (currentUser.avatar) {
+    avatarEl.innerHTML = '<img src="' + currentUser.avatar + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%">';
+  } else {
+    avatarEl.textContent = currentUser.name[0];
+  }
   document.getElementById('sidebar-name').textContent = currentUser.name;
   const roleBadge = document.getElementById('sidebar-role');
   roleBadge.textContent = currentUser.role;
@@ -2405,7 +2410,7 @@ async function openDetail(id) {
             (!r.comments || r.comments.length === 0 ? '<p style="font-size:13px;color:var(--text-3)">Sin comentarios.</p>' :
               r.comments.map(c =>
                 '<div class="comment">' +
-                  '<div class="comment-avatar" style="background:' + getUserColor(c.author).bg + ';color:' + getUserColor(c.author).color + '">' + c.author[0] + '</div>' +
+                  '<div class="comment-avatar" style="background:' + getUserColor(c.author).bg + ';color:' + getUserColor(c.author).color + '">' + userAvatarHTML(c.author) + '</div>' +
                   '<div class="comment-content">' +
                     '<div class="comment-meta"><strong>' + c.author + '</strong> · ' + formatDateFull(c.createdAt) + '</div>' +
                     '<div class="comment-text">' + c.text + '</div>' +
@@ -2694,7 +2699,7 @@ async function renderUsers() {
     const assigned = reports.filter(r => r.assignee === u.name).length;
     const solved = reports.filter(r => r.assignee === u.name && r.status === 'Solucionado').length;
     return '<div class="user-card">' +
-      '<div class="avatar-lg" style="background:' + rc.bg + ';color:' + rc.color + '">' + u.name[0] + '</div>' +
+      '<div class="avatar-lg" style="background:' + rc.bg + ';color:' + rc.color + '">' + (u.avatar ? '<img src="' + u.avatar + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%">' : u.name[0]) + '</div>' +
       '<div class="user-name">' + u.name + '</div>' +
       '<div class="role-badge" style="background:' + rc.bg + ';color:' + rc.color + ';display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-family:JetBrains Mono,monospace">' + u.role + '</div>' +
       '<div class="user-stats">' +
@@ -2752,7 +2757,15 @@ function formatDateFull(iso) {
 
 function getUserColor(name) {
   const u = usersCache.find(x => x.name === name);
-  return u ? { color: u.color, bg: u.bg } : { color: 'var(--text-2)', bg: 'var(--bg-3)' };
+  return u ? { color: u.color, bg: u.bg, avatar: u.avatar || '' } : { color: 'var(--text-2)', bg: 'var(--bg-3)', avatar: '' };
+}
+
+function userAvatarHTML(name) {
+  const u = getUserColor(name);
+  if (u.avatar) {
+    return '<img src="' + u.avatar + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%">';
+  }
+  return name[0] || '?';
 }
 
 function openModal(id) { document.getElementById(id).classList.add('open'); }
