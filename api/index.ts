@@ -1,5 +1,7 @@
 export const runtime = "nodejs";
-import { kv } from "@vercel/kv";
+import { Redis } from "@upstash/redis";
+
+const redis = Redis.fromEnv();
 
 const STATE_KEY = "samp-tracker-state";
 
@@ -59,7 +61,7 @@ let state: AppState = JSON.parse(JSON.stringify(DEFAULT_STATE));
 
 async function loadState() {
   try {
-    const saved = await kv.get<AppState>(STATE_KEY);
+    const saved = await redis.get<AppState>(STATE_KEY);
     if (saved && typeof saved === "object") {
       state = saved;
       safeInit(state);
@@ -71,7 +73,7 @@ async function loadState() {
 
 async function saveState() {
   try {
-    await kv.set(STATE_KEY, state);
+    await redis.set(STATE_KEY, state);
   } catch {
     // ignore write errors
   }
