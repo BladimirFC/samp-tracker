@@ -2187,6 +2187,7 @@ async function initApp() {
 
   updatePendingBadge();
   updateNotifBadge();
+  startPolling();
   navigate('dashboard');
 }
 
@@ -2194,7 +2195,31 @@ async function initApp() {
 // NAVIGATION
 // ════════════════════════════════════════════
 
+let currentPage = null;
+let detailOpenId = null;
+let pollInterval = null;
+
+function startPolling() {
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = setInterval(refreshCurrentView, 5000);
+}
+
+async function refreshCurrentView() {
+  if (detailOpenId) {
+    await openDetail(detailOpenId);
+    return;
+  }
+  if (!currentPage) return;
+  if (currentPage === 'dashboard') await renderDashboard();
+  if (currentPage === 'reports') await renderReports();
+  if (currentPage === 'kanban') await renderKanban();
+  if (currentPage === 'patches') await renderPatches();
+  if (currentPage === 'users') await renderUsers();
+}
+
 async function navigate(page) {
+  currentPage = page;
+  detailOpenId = null;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('page-' + page).classList.add('active');
@@ -2377,6 +2402,7 @@ async function renderKanban() {
 
 async function openDetail(id) {
   closeNotifDropdown();
+  detailOpenId = id;
   let r;
   try {
     r = await api('/reports/' + id);
@@ -2769,14 +2795,14 @@ function userAvatarHTML(name) {
 }
 
 function openModal(id) { document.getElementById(id).classList.add('open'); }
-function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); if (id === 'modal-detail') detailOpenId = null; }
 
 document.querySelectorAll('.modal-overlay').forEach(m => {
-  m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); });
+  m.addEventListener('click', e => { if (e.target === m) { m.classList.remove('open'); if (m.id === 'modal-detail') detailOpenId = null; } });
 });
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+  if (e.key === 'Escape') { document.querySelectorAll('.modal-overlay.open').forEach(m => { m.classList.remove('open'); if (m.id === 'modal-detail') detailOpenId = null; }); }
 });
 
 function notify(msg) {
