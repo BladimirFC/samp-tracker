@@ -1553,15 +1553,15 @@
       <p class="auth-brand-desc">Plataforma interna de seguimiento de bugs, parches y reportes del servidor.</p>
       <div class="auth-stats">
         <div>
-          <div class="auth-stat-val">12</div>
+          <div class="auth-stat-val" id="auth-stat-open">—</div>
           <div class="auth-stat-lbl">Bugs abiertos</div>
         </div>
         <div>
-          <div class="auth-stat-val">3</div>
+          <div class="auth-stat-val" id="auth-stat-patches">—</div>
           <div class="auth-stat-lbl">Parches</div>
         </div>
         <div>
-          <div class="auth-stat-val">48h</div>
+          <div class="auth-stat-val" id="auth-stat-avg">—</div>
           <div class="auth-stat-lbl">Avg. resolución</div>
         </div>
       </div>
@@ -3259,6 +3259,25 @@ async function saveProfile() {
     errEl.style.display = 'block';
   }
 }
+
+async function loadAuthStats() {
+  try {
+    const [stats, patches] = await Promise.all([
+      fetch('/api/stats').then(r => r.ok ? r.json() : null),
+      fetch('/api/patches').then(r => r.ok ? r.json() : null),
+    ]);
+    if (stats) {
+      const open = (stats.pending || 0) + (stats.inRevision || 0) + (stats.inDev || 0) + (stats.testing || 0);
+      document.getElementById('auth-stat-open').textContent = open;
+    }
+    if (patches) {
+      document.getElementById('auth-stat-patches').textContent = Array.isArray(patches) ? patches.length : '—';
+    }
+    document.getElementById('auth-stat-avg').textContent = '—';
+  } catch {}
+}
+
+loadAuthStats();
 
 </script>
 </body>
