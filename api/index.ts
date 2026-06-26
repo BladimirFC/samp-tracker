@@ -1,7 +1,12 @@
 export const runtime = "nodejs";
 import { Redis } from "@upstash/redis";
 
-const redis = Redis.fromEnv();
+let redis: Redis | null = null;
+try {
+  redis = Redis.fromEnv();
+} catch {
+  // Upstash Redis not configured — will use in-memory fallback
+}
 
 const STATE_KEY = "samp-tracker-state";
 
@@ -60,6 +65,7 @@ let state: AppState = JSON.parse(JSON.stringify(DEFAULT_STATE));
 // ─── KV PERSISTENCE ────────────────────────────────────────────────
 
 async function loadState() {
+  if (!redis) return;
   try {
     const saved = await redis.get<AppState>(STATE_KEY);
     if (saved && typeof saved === "object") {
@@ -67,11 +73,12 @@ async function loadState() {
       safeInit(state);
     }
   } catch {
-    // KV not available (local dev or not configured) — use defaults
+    // KV not available — use defaults
   }
 }
 
 async function saveState() {
+  if (!redis) return;
   try {
     await redis.set(STATE_KEY, state);
   } catch {
