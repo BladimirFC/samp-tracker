@@ -2388,7 +2388,7 @@ async function openDetail(id) {
   document.getElementById('detail-id').textContent = r.id;
   document.getElementById('detail-title').textContent = r.title;
 
-  const canEdit = currentUser.role === 'CEO' || currentUser.role === 'Developer' || currentUser.role === 'Tester';
+  const canEdit = currentUser.role === 'CEO' || currentUser.role === 'Developer';
   const isDev = currentUser.role === 'Developer';
   const isCEO = currentUser.role === 'CEO';
   const isAssigned = r.assignee === currentUser.name;
