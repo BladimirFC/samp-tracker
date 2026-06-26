@@ -3262,22 +3262,24 @@ async function saveProfile() {
 
 async function loadAuthStats() {
   try {
-    const [stats, patches] = await Promise.all([
-      fetch('/api/stats').then(r => r.ok ? r.json() : null),
-      fetch('/api/patches').then(r => r.ok ? r.json() : null),
-    ]);
-    if (stats) {
+    const res = await fetch('/api/stats');
+    if (res.ok) {
+      const stats = await res.json();
       const open = (stats.pending || 0) + (stats.inRevision || 0) + (stats.inDev || 0) + (stats.testing || 0);
       document.getElementById('auth-stat-open').textContent = open;
     }
-    if (patches) {
-      document.getElementById('auth-stat-patches').textContent = Array.isArray(patches) ? patches.length : '—';
+  } catch {}
+
+  try {
+    const res = await fetch('/api/patches');
+    if (res.ok) {
+      const patches = await res.json();
+      document.getElementById('auth-stat-patches').textContent = Array.isArray(patches) ? patches.length : 0;
     }
-    document.getElementById('auth-stat-avg').textContent = '—';
   } catch {}
 }
 
-loadAuthStats();
+document.addEventListener('DOMContentLoaded', loadAuthStats);
 
 </script>
 </body>
