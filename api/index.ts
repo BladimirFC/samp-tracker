@@ -1,9 +1,9 @@
 export const runtime = "nodejs";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { kv } from "@vercel/kv";
 
-// ─── IN-MEMORY STORAGE ────────────────────────────────────────────
+const STATE_KEY = "samp-tracker-state";
+
+// ─── INTERFACES ────────────────────────────────────────────────────
 
 interface User { id: number; name: string; username: string; password: string; role: string; color: string; bg: string; avatar: string; discordWebhook: string; createdAt: string; }
 interface Comment { id: number; text: string; author: string; createdAt: string; }
@@ -14,7 +14,18 @@ interface Patch { id: string; version: string; date: string; notes: string; bugI
 interface Tag { id: number; name: string; color: string; }
 interface NotificationItem { id: number; type: string; message: string; report_id: string; username: string; read: number; created_at: string; }
 
-// ─── STATE ────────────────────────────────────────────────────────
+interface AppState {
+  nextUserId: number; nextCommentId: number; nextAttachmentId: number; nextTagId: number; nextNotifId: number;
+  reportCounter: number; patchCounter: number;
+  users: User[];
+  reports: Report[];
+  patches: Patch[];
+  tags: Tag[];
+  notifications: NotificationItem[];
+  kvSettings: Record<string, string>;
+}
+
+// ─── DEFAULTS ──────────────────────────────────────────────────────
 
 const ROLE_COLORS: Record<string, { color: string; bg: string }> = {
   CEO: { color: "#e8c547", bg: "rgba(232,197,71,0.15)" },
@@ -22,60 +33,71 @@ const ROLE_COLORS: Record<string, { color: string; bg: string }> = {
   Tester: { color: "#58a6ff", bg: "rgba(88,166,255,0.15)" },
 };
 
-const DATA_FILE = join(tmpdir(), "samp-tracker-data.json");
+const DEFAULT_STATE: AppState = {
+  nextUserId: 2, nextCommentId: 1, nextAttachmentId: 1, nextTagId: 1, nextNotifId: 1,
+  reportCounter: 1, patchCounter: 1,
+  users: [{
+    id: 1, name: "Admin", username: "admin", password: "admin123", role: "CEO",
+    color: ROLE_COLORS.CEO.color, bg: ROLE_COLORS.CEO.bg, avatar: "", discordWebhook: "", createdAt: new Date().toISOString(),
+  }],
+  reports: [],
+  patches: [],
+  tags: [
+    { id: 1, name: "urgente", color: "#dc2626" },
+    { id: 2, name: "UI", color: "#2563eb" },
+    { id: 3, name: "backend", color: "#16a34a" },
+  ],
+  notifications: [],
+  kvSettings: {},
+};
 
-let nextUserId = 2, nextCommentId = 1, nextAttachmentId = 1, nextTagId = 1, nextNotifId = 1, reportCounter = 1, patchCounter = 1;
+// ─── IN-MEMORY STATE ───────────────────────────────────────────────
 
-const users: User[] = [{
-  id: 1, name: "Admin", username: "admin", password: "admin123", role: "CEO",
-  color: ROLE_COLORS.CEO.color, bg: ROLE_COLORS.CEO.bg, avatar: "", discordWebhook: "", createdAt: new Date().toISOString(),
-}];
+let state: AppState = JSON.parse(JSON.stringify(DEFAULT_STATE));
 
-const reports: Report[] = [];
-const patches: Patch[] = [];
-const tags: Tag[] = [
-  { id: 1, name: "urgente", color: "#dc2626" },
-  { id: 2, name: "UI", color: "#2563eb" },
-  { id: 3, name: "backend", color: "#16a34a" },
-];
-const notifications: NotificationItem[] = [];
-const kvSettings: Record<string, string> = {};
-if (tags.length > 0) nextTagId = Math.max(...tags.map(t => t.id)) + 1;
+// ─── KV PERSISTENCE ────────────────────────────────────────────────
 
-// ─── PERSISTENCE ──────────────────────────────────────────────────
-
-function saveData() {
+async function loadState() {
   try {
-    writeFileSync(DATA_FILE, JSON.stringify({
-      nextUserId, nextCommentId, nextAttachmentId, nextTagId, nextNotifId,
-      reportCounter, patchCounter,
-      users, reports, patches, tags, notifications, kvSettings,
-    }));
-  } catch { /* ignore write errors */ }
-}
-
-function loadData() {
-  try {
-    if (existsSync(DATA_FILE)) {
-      const d = JSON.parse(readFileSync(DATA_FILE, "utf-8"));
-      if (d.nextUserId) nextUserId = d.nextUserId;
-      if (d.nextCommentId) nextCommentId = d.nextCommentId;
-      if (d.nextAttachmentId) nextAttachmentId = d.nextAttachmentId;
-      if (d.nextTagId) nextTagId = d.nextTagId;
-      if (d.nextNotifId) nextNotifId = d.nextNotifId;
-      if (d.reportCounter) reportCounter = d.reportCounter;
-      if (d.patchCounter) patchCounter = d.patchCounter;
-      if (d.users) { users.length = 0; users.push(...d.users); }
-      if (d.reports) { reports.length = 0; reports.push(...d.reports); }
-      if (d.patches) { patches.length = 0; patches.push(...d.patches); }
-      if (d.tags) { tags.length = 0; tags.push(...d.tags); }
-      if (d.notifications) { notifications.length = 0; notifications.push(...d.notifications); }
-      if (d.kvSettings) Object.assign(kvSettings, d.kvSettings);
+    const saved = await kv.get<AppState>(STATE_KEY);
+    if (saved && typeof saved === "object") {
+      state = saved;
+      safeInit(state);
     }
-  } catch { /* ignore load errors */ }
+  } catch {
+    // KV not available (local dev or not configured) — use defaults
+  }
 }
 
-loadData();
+async function saveState() {
+  try {
+    await kv.set(STATE_KEY, state);
+  } catch {
+    // ignore write errors
+  }
+}
+
+function safeInit(s: AppState) {
+  if (!Array.isArray(s.reports)) s.reports = [];
+  if (!Array.isArray(s.patches)) s.patches = [];
+  if (!Array.isArray(s.users)) s.users = DEFAULT_STATE.users;
+  if (!Array.isArray(s.tags)) s.tags = DEFAULT_STATE.tags;
+  if (!Array.isArray(s.notifications)) s.notifications = [];
+  if (typeof s.kvSettings !== "object") s.kvSettings = {};
+  // ensure admin always exists
+  if (!s.users.find(u => u.id === 1)) {
+    s.users.unshift(DEFAULT_STATE.users[0]);
+  }
+}
+
+// ─── CONVENIENCE ACCESSORS ─────────────────────────────────────────
+
+function getUsers() { return state.users; }
+function getReports() { return state.reports; }
+function getPatches() { return state.patches; }
+function getTags() { return state.tags; }
+function getNotifications() { return state.notifications; }
+function getKvSettings() { return state.kvSettings; }
 
 // ─── HELPERS ──────────────────────────────────────────────────────
 
@@ -84,31 +106,34 @@ function r(data: unknown, status = 200) {
 }
 function nf() { return r({ error: "Not found" }, 404); }
 
-function genRptId() { return `BUG-${String(reportCounter++).padStart(3, "0")}`; }
-function genPatchId() { return `PATCH-${String(patchCounter++).padStart(3, "0")}`; }
+function genRptId() { return `BUG-${String(state.reportCounter++).padStart(3, "0")}`; }
+function genPatchId() { return `PATCH-${String(state.patchCounter++).padStart(3, "0")}`; }
 
 function addHist(report: Report, user: string, action: string, from?: string, to?: string) {
   if (!report.history) report.history = [];
   report.history.push({ user, action, from: from || "", to: to || "", date: new Date().toISOString() });
 }
 function addNotif(type: string, msg: string, reportId: string, username: string) {
-  notifications.push({ id: nextNotifId++, type, message: msg, report_id: reportId, username, read: 0, created_at: new Date().toISOString() });
+  const notifications = getNotifications();
+  notifications.push({ id: state.nextNotifId++, type, message: msg, report_id: reportId, username, read: 0, created_at: new Date().toISOString() });
 }
 
 // ─── HANDLERS ─────────────────────────────────────────────────────
 
 function hRegister(b: Record<string, unknown>) {
+  const users = getUsers();
   const { name, username, password, role } = b as { name: string; username: string; password: string; role: string };
   if (!name || !username || !password) return r({ error: "Todos los campos son requeridos." }, 400);
   if (users.find(u => u.username.toLowerCase() === username.toLowerCase())) return r({ error: "Ese usuario ya existe." }, 409);
   const rc = ROLE_COLORS[role] || ROLE_COLORS.Tester;
-  const user: User = { id: nextUserId++, name, username, password, role: role || "Tester", color: rc.color, bg: rc.bg, avatar: "", discordWebhook: "", createdAt: new Date().toISOString() };
+  const user: User = { id: state.nextUserId++, name, username, password, role: role || "Tester", color: rc.color, bg: rc.bg, avatar: "", discordWebhook: "", createdAt: new Date().toISOString() };
   users.push(user);
   const { password: _, ...safe } = user;
   return r(safe, 201);
 }
 
 function hLogin(b: Record<string, unknown>) {
+  const users = getUsers();
   const { username, password } = b as { username: string; password: string };
   const user = users.find(u => u.username.toLowerCase() === (username || "").toLowerCase() && u.password === password);
   if (!user) return r({ error: "Usuario o contraseña incorrectos." }, 401);
@@ -117,6 +142,7 @@ function hLogin(b: Record<string, unknown>) {
 }
 
 function hUpdateUser(id: number, b: Record<string, unknown>) {
+  const users = getUsers();
   const idx = users.findIndex(u => u.id === id);
   if (idx === -1) return nf();
   const user = users[idx];
@@ -130,6 +156,7 @@ function hUpdateUser(id: number, b: Record<string, unknown>) {
 }
 
 function hListReports(url: URL) {
+  const reports = getReports();
   const search = (url.searchParams.get("search") || "").toLowerCase();
   const status = url.searchParams.get("status") || "";
   const priority = url.searchParams.get("priority") || "";
@@ -144,6 +171,8 @@ function hListReports(url: URL) {
 }
 
 function hCreateReport(b: Record<string, unknown>) {
+  const reports = getReports();
+  const users = getUsers();
   const { title, type, priority, description, evidence, author } = b as { title: string; type: string; priority: string; description: string; evidence?: string; author: string };
   if (!title || !description || !author) return r({ error: "Título, descripción y autor son requeridos." }, 400);
   const id = genRptId(), now = new Date().toISOString();
@@ -151,13 +180,15 @@ function hCreateReport(b: Record<string, unknown>) {
   reports.push(report);
   addNotif("new_report", `Nuevo reporte ${id}: ${title}`, id, author);
   users.filter(u => u.role === "CEO").forEach(u => addNotif("new_report", `Nuevo reporte ${id}: ${title} por ${author}`, id, u.username));
+  saveState();
   return r(report, 201);
 }
 
-function hGetReport(id: string) { const x = reports.find(r => r.id === id); return x ? r(x) : nf(); }
-function hDeleteReport(id: string) { const i = reports.findIndex(r => r.id === id); if (i === -1) return nf(); reports.splice(i, 1); return r({ ok: true }); }
+function hGetReport(id: string) { const x = getReports().find(r => r.id === id); return x ? r(x) : nf(); }
+function hDeleteReport(id: string) { const i = getReports().findIndex(r => r.id === id); if (i === -1) return nf(); getReports().splice(i, 1); return r({ ok: true }); }
 
 function hUpdateStatus(id: string, b: Record<string, unknown>) {
+  const reports = getReports();
   const rep = reports.find(r => r.id === id); if (!rep) return nf();
   const { status, username } = b as { status: string; username: string };
   if (!status) return r({ error: "Estado requerido" }, 400);
@@ -168,6 +199,7 @@ function hUpdateStatus(id: string, b: Record<string, unknown>) {
 }
 
 function hAssign(id: string, b: Record<string, unknown>) {
+  const reports = getReports();
   const rep = reports.find(r => r.id === id); if (!rep) return nf();
   const { username } = b as { username: string };
   const old = rep.assignee; rep.assignee = username; rep.updatedAt = new Date().toISOString();
@@ -176,14 +208,15 @@ function hAssign(id: string, b: Record<string, unknown>) {
   return r(rep);
 }
 
-function hUnassign(id: string) { const rep = reports.find(r => r.id === id); if (!rep) return nf(); rep.assignee = null; rep.updatedAt = new Date().toISOString(); return r(rep); }
+function hUnassign(id: string) { const rep = getReports().find(r => r.id === id); if (!rep) return nf(); rep.assignee = null; rep.updatedAt = new Date().toISOString(); return r(rep); }
 
 function hAddComment(id: string, b: Record<string, unknown>) {
+  const reports = getReports();
   const rep = reports.find(r => r.id === id); if (!rep) return nf();
   const { text, author } = b as { text: string; author: string };
   if (!text || !author) return r({ error: "Texto y autor requeridos" }, 400);
   if (!rep.comments) rep.comments = [];
-  const c: Comment = { id: nextCommentId++, text, author, createdAt: new Date().toISOString() };
+  const c: Comment = { id: state.nextCommentId++, text, author, createdAt: new Date().toISOString() };
   rep.comments.push(c); rep.updatedAt = new Date().toISOString();
   addHist(rep, author, "agregó un comentario");
   const f = rep.followers.filter(f => f !== author); f.forEach(f => addNotif("new_comment", `${author} comentó en ${id}`, id, f));
@@ -192,6 +225,7 @@ function hAddComment(id: string, b: Record<string, unknown>) {
 }
 
 function hFollow(id: string, b: Record<string, unknown>) {
+  const reports = getReports();
   const rep = reports.find(r => r.id === id); if (!rep) return nf();
   const { username } = b as { username: string };
   if (!rep.followers) rep.followers = [];
@@ -201,22 +235,26 @@ function hFollow(id: string, b: Record<string, unknown>) {
 }
 
 function hAddAttachment(id: string, b: Record<string, unknown>) {
+  const reports = getReports();
   const rep = reports.find(r => r.id === id); if (!rep) return nf();
   const { url, name, added_by } = b as { url: string; name: string; added_by: string };
   if (!url) return r({ error: "URL requerida" }, 400);
   if (!rep.attachments) rep.attachments = [];
-  const a: Attachment = { id: nextAttachmentId++, url, name: name || "Adjunto", added_by: added_by || "Desconocido", created_at: new Date().toISOString() };
+  const a: Attachment = { id: state.nextAttachmentId++, url, name: name || "Adjunto", added_by: added_by || "Desconocido", created_at: new Date().toISOString() };
   rep.attachments.push(a); if (added_by) addHist(rep, added_by, "agregó un adjunto");
   return r(a, 201);
 }
 
 function hDeleteAttachment(rid: string, aid: number) {
+  const reports = getReports();
   const rep = reports.find(r => r.id === rid); if (!rep || !rep.attachments) return nf();
   const i = rep.attachments.findIndex(a => a.id === aid); if (i === -1) return nf();
   rep.attachments.splice(i, 1); return r({ ok: true });
 }
 
 function hCreatePatch(b: Record<string, unknown>) {
+  const reports = getReports();
+  const patches = getPatches();
   const { version, date, notes, bugIds } = b as { version: string; date: string; notes?: string; bugIds?: string[] };
   if (!version) return r({ error: "Versión requerida" }, 400);
   const id = genPatchId();
@@ -227,6 +265,7 @@ function hCreatePatch(b: Record<string, unknown>) {
 }
 
 function hStats() {
+  const reports = getReports();
   const total = reports.length;
   return r({
     total, pending: reports.filter(r => r.status === "Pendiente").length,
@@ -241,6 +280,7 @@ function hStats() {
 }
 
 function hMetrics() {
+  const reports = getReports();
   const now = new Date(), days: { date: string; total: number }[] = [];
   for (let i = 29; i >= 0; i--) { const d = new Date(now); d.setDate(d.getDate() - i); const ds = d.toISOString().slice(0, 10); days.push({ date: ds, total: reports.filter(r => r.createdAt.slice(0, 10) === ds).length }); }
   const wa = new Date(now); wa.setDate(wa.getDate() - 7);
@@ -255,8 +295,9 @@ function hMetrics() {
 // ─── MAIN ROUTER ──────────────────────────────────────────────────
 
 async function handleAll(req: Request): Promise<Response> {
+  await loadState();
+
   const url = new URL(req.url);
-  // Extract path from apipath query param (set by Vercel routes)
   const apipath = url.searchParams.get("apipath") || "";
   const path = apipath.split("/").filter(Boolean);
   const method = req.method;
@@ -270,15 +311,15 @@ async function handleAll(req: Request): Promise<Response> {
     if (path[0] === "register" && method === "POST") return hRegister(body);
     if (path[0] === "login" && method === "POST") return hLogin(body);
     // Users
-    if (path[0] === "users" && path.length === 1 && method === "GET") return r(users.map(({ password, ...u }) => u));
+    if (path[0] === "users" && path.length === 1 && method === "GET") return r(getUsers().map(({ password, ...u }) => u));
     if (path[0] === "users" && path.length === 2 && method === "PUT") return hUpdateUser(parseInt(path[1]), body);
     // Settings
-    if (path[0] === "settings" && method === "GET") return r(kvSettings);
-    if (path[0] === "settings" && method === "POST") { const { key, value } = body as { key: string; value: string }; if (key) kvSettings[key] = value || ""; return r({ ok: true }); }
+    if (path[0] === "settings" && method === "GET") return r(getKvSettings());
+    if (path[0] === "settings" && method === "POST") { const { key, value } = body as { key: string; value: string }; if (key) getKvSettings()[key] = value || ""; return r({ ok: true }); }
     // Tags
-    if (path[0] === "tags" && path.length === 1 && method === "GET") return r(tags);
-    if (path[0] === "tags" && path.length === 1 && method === "POST") { const { name, color } = body as { name: string; color: string }; if (!name) return r({ error: "Nombre requerido" }, 400); const t: Tag = { id: nextTagId++, name, color: color || "#7c3aed" }; tags.push(t); return r(t, 201); }
-    if (path[0] === "tags" && path.length === 2 && method === "DELETE") { const tid = parseInt(path[1]); const ti = tags.findIndex(t => t.id === tid); if (ti === -1) return nf(); tags.splice(ti, 1); return r({ ok: true }); }
+    if (path[0] === "tags" && path.length === 1 && method === "GET") return r(getTags());
+    if (path[0] === "tags" && path.length === 1 && method === "POST") { const { name, color } = body as { name: string; color: string }; if (!name) return r({ error: "Nombre requerido" }, 400); const tags = getTags(); const t: Tag = { id: state.nextTagId++, name, color: color || "#7c3aed" }; tags.push(t); return r(t, 201); }
+    if (path[0] === "tags" && path.length === 2 && method === "DELETE") { const tags = getTags(); const tid = parseInt(path[1]); const ti = tags.findIndex(t => t.id === tid); if (ti === -1) return nf(); tags.splice(ti, 1); return r({ ok: true }); }
     // Reports
     if (path[0] === "reports" && path.length === 1 && method === "GET") return hListReports(url);
     if (path[0] === "reports" && path.length === 1 && method === "POST") return hCreateReport(body);
@@ -292,7 +333,7 @@ async function handleAll(req: Request): Promise<Response> {
     if (path[0] === "reports" && path.length === 3 && path[2] === "attachments" && method === "POST") return hAddAttachment(path[1], body);
     if (path[0] === "reports" && path.length === 4 && path[2] === "attachments" && method === "DELETE") return hDeleteAttachment(path[1], parseInt(path[3]));
     // Patches
-    if (path[0] === "patches" && path.length === 1 && method === "GET") return r(patches.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+    if (path[0] === "patches" && path.length === 1 && method === "GET") return r(getPatches().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
     if (path[0] === "patches" && path.length === 1 && method === "POST") return hCreatePatch(body);
     // Stats / Metrics
     if (path[0] === "stats" && method === "GET") return hStats();
@@ -300,16 +341,18 @@ async function handleAll(req: Request): Promise<Response> {
     // Notifications
     if (path[0] === "notifications" && path.length === 1 && method === "GET") {
       const uname = url.searchParams.get("username") || "";
-      return r(notifications.filter(n => n.username === uname).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
+      return r(getNotifications().filter(n => n.username === uname).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
     }
-    if (path[0] === "notifications" && path.length === 3 && path[2] === "read" && method === "PUT") { const nid = parseInt(path[1]); const n = notifications.find(n => n.id === nid); if (n) n.read = 1; return r({ ok: true }); }
-    if (path[0] === "notifications" && path.length === 2 && path[1] === "read-all" && method === "PUT") { const { username } = body as { username: string }; notifications.forEach(n => { if (n.username === username) n.read = 1; }); return r({ ok: true }); }
+    if (path[0] === "notifications" && path.length === 3 && path[2] === "read" && method === "PUT") { const nid = parseInt(path[1]); const n = getNotifications().find(n => n.id === nid); if (n) n.read = 1; return r({ ok: true }); }
+    if (path[0] === "notifications" && path.length === 2 && path[1] === "read-all" && method === "PUT") { const { username } = body as { username: string }; getNotifications().forEach(n => { if (n.username === username) n.read = 1; }); return r({ ok: true }); }
 
     return nf();
   } catch (e: unknown) {
     return r({ error: e instanceof Error ? e.message : "Error del servidor" }, 500);
   } finally {
-    if (method === "POST" || method === "PUT" || method === "DELETE" || method === "PATCH") saveData();
+    if (method === "POST" || method === "PUT" || method === "DELETE" || method === "PATCH") {
+      await saveState();
+    }
   }
 }
 
