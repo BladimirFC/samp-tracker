@@ -2215,6 +2215,8 @@ async function refreshCurrentView() {
   if (currentPage === 'kanban') await renderKanban();
   if (currentPage === 'patches') await renderPatches();
   if (currentPage === 'users') await renderUsers();
+  if (currentPage === 'metrics') await renderMetrics();
+  if (currentPage === 'changelog') await renderChangelog();
 }
 
 async function navigate(page) {
@@ -2236,6 +2238,8 @@ async function navigate(page) {
   if (page === 'kanban') await renderKanban();
   if (page === 'patches') await renderPatches();
   if (page === 'users') await renderUsers();
+  if (page === 'metrics') await renderMetrics();
+  if (page === 'changelog') await renderChangelog();
 
   document.getElementById('sidebar').classList.remove('open');
   document.getElementById('sidebar-overlay').classList.remove('open');
