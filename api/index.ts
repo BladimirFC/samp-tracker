@@ -99,7 +99,8 @@ async function loadState() {
     const saved = await redis.get<AppState>(STATE_KEY);
     if (saved && typeof saved === "object") {
       state = saved;
-      safeInit(state);
+      const changed = safeInit(state);
+      if (changed) await saveState();
     }
   } catch {
     // KV not available — use defaults
@@ -116,33 +117,44 @@ async function saveState() {
 }
 
 function safeInit(s: AppState) {
-  if (!Array.isArray(s.reports)) s.reports = [];
-  if (!Array.isArray(s.patches)) s.patches = [];
-  if (!Array.isArray(s.users)) s.users = DEFAULT_STATE.users;
-  if (!Array.isArray(s.tags)) s.tags = DEFAULT_STATE.tags;
-  if (!Array.isArray(s.notifications)) s.notifications = [];
-  if (typeof s.kvSettings !== "object") s.kvSettings = {};
-  if (!Number.isInteger(s.nextUserId) || s.nextUserId < 1) s.nextUserId = Math.max(1, ...s.users.map(u => u.id + 1));
-  if (!Number.isInteger(s.nextCommentId) || s.nextCommentId < 1) s.nextCommentId = Math.max(1, ...s.reports.flatMap(r => (r.comments || []).map(c => c.id + 1)));
-  if (!Number.isInteger(s.nextAttachmentId) || s.nextAttachmentId < 1) s.nextAttachmentId = Math.max(1, ...s.reports.flatMap(r => (r.attachments || []).map(a => a.id + 1)));
-  if (!Number.isInteger(s.nextTagId) || s.nextTagId < 1) s.nextTagId = Math.max(1, ...s.tags.map(t => t.id + 1));
-  if (!Number.isInteger(s.nextNotifId) || s.nextNotifId < 1) s.nextNotifId = Math.max(1, ...s.notifications.map(n => n.id + 1));
-  if (!Number.isInteger(s.reportCounter) || s.reportCounter < 1) s.reportCounter = Math.max(1, ...s.reports.map(r => Number(r.id.replace(/^BUG-/, "")) + 1).filter(Number.isFinite));
-  if (!Number.isInteger(s.patchCounter) || s.patchCounter < 1) s.patchCounter = Math.max(1, ...s.patches.map(p => Number(p.id.replace(/^PATCH-/, "")) + 1).filter(Number.isFinite));
+  let changed = false;
+  if (!Array.isArray(s.reports)) { s.reports = []; changed = true; }
+  if (!Array.isArray(s.patches)) { s.patches = []; changed = true; }
+  if (!Array.isArray(s.users)) { s.users = DEFAULT_STATE.users; changed = true; }
+  if (!Array.isArray(s.tags)) { s.tags = DEFAULT_STATE.tags; changed = true; }
+  if (!Array.isArray(s.notifications)) { s.notifications = []; changed = true; }
+  if (typeof s.kvSettings !== "object") { s.kvSettings = {}; changed = true; }
+  if (!Number.isInteger(s.nextUserId) || s.nextUserId < 1) { s.nextUserId = Math.max(1, ...s.users.map(u => u.id + 1)); changed = true; }
+  if (!Number.isInteger(s.nextCommentId) || s.nextCommentId < 1) { s.nextCommentId = Math.max(1, ...s.reports.flatMap(r => (r.comments || []).map(c => c.id + 1))); changed = true; }
+  if (!Number.isInteger(s.nextAttachmentId) || s.nextAttachmentId < 1) { s.nextAttachmentId = Math.max(1, ...s.reports.flatMap(r => (r.attachments || []).map(a => a.id + 1))); changed = true; }
+  if (!Number.isInteger(s.nextTagId) || s.nextTagId < 1) { s.nextTagId = Math.max(1, ...s.tags.map(t => t.id + 1)); changed = true; }
+  if (!Number.isInteger(s.nextNotifId) || s.nextNotifId < 1) { s.nextNotifId = Math.max(1, ...s.notifications.map(n => n.id + 1)); changed = true; }
+  if (!Number.isInteger(s.reportCounter) || s.reportCounter < 1) { s.reportCounter = Math.max(1, ...s.reports.map(r => Number(r.id.replace(/^BUG-/, "")) + 1).filter(Number.isFinite)); changed = true; }
+  if (!Number.isInteger(s.patchCounter) || s.patchCounter < 1) { s.patchCounter = Math.max(1, ...s.patches.map(p => Number(p.id.replace(/^PATCH-/, "")) + 1).filter(Number.isFinite)); changed = true; }
   s.reports.forEach(report => {
-    report.status = canonicalStatus(report.status);
-    report.priority = canonicalPriority(report.priority);
-    report.type = canonicalType(report.type);
-    if (!Array.isArray(report.followers)) report.followers = [];
-    if (!Array.isArray(report.tags)) report.tags = [];
-    if (!Array.isArray(report.comments)) report.comments = [];
-    if (!Array.isArray(report.attachments)) report.attachments = [];
-    if (!Array.isArray(report.history)) report.history = [];
+    const status = canonicalStatus(report.status);
+    const priority = canonicalPriority(report.priority);
+    const type = canonicalType(report.type);
+    if (report.status !== status) { report.status = status; changed = true; }
+    if (report.priority !== priority) { report.priority = priority; changed = true; }
+    if (report.type !== type) { report.type = type; changed = true; }
+    if (!Array.isArray(report.followers)) { report.followers = []; changed = true; }
+    if (!Array.isArray(report.tags)) { report.tags = []; changed = true; }
+    if (!Array.isArray(report.comments)) { report.comments = []; changed = true; }
+    if (!Array.isArray(report.attachments)) { report.attachments = []; changed = true; }
+    if (!Array.isArray(report.history)) { report.history = []; changed = true; }
   });
-  // ensure admin always exists
-  if (!s.users.find(u => u.id === 1)) {
-    s.users.unshift(DEFAULT_STATE.users[0]);
+  // Remove only the legacy admin account, and only when another CEO remains.
+  // This migration is persisted so the account cannot reappear after a restart.
+  const hasAnotherCeo = s.users.some(u => u.username.toLowerCase() !== "admin" && u.role === "CEO");
+  if (hasAnotherCeo) {
+    const usersWithoutLegacyAdmin = s.users.filter(u => u.username.toLowerCase() !== "admin");
+    if (usersWithoutLegacyAdmin.length !== s.users.length) {
+      s.users = usersWithoutLegacyAdmin;
+      changed = true;
+    }
   }
+  return changed;
 }
 
 // ─── CONVENIENCE ACCESSORS ─────────────────────────────────────────
