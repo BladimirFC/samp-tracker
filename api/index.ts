@@ -40,6 +40,34 @@ const ROLE_COLORS: Record<string, { color: string; bg: string }> = {
   Tester: { color: "#58a6ff", bg: "rgba(88,166,255,0.15)" },
 };
 
+const STATUSES = ["Pendiente", "En revisión", "En desarrollo", "Esperando pruebas", "Solucionado", "Cerrado"] as const;
+const PRIORITIES = ["Crítica", "Alta", "Media", "Baja"] as const;
+const REPORT_TYPES = ["Bug", "Exploit", "Sugerencia", "Optimización", "Mejora"] as const;
+
+function canonicalStatus(value: unknown) {
+  const aliases: Record<string, string> = {
+    "En revision": "En revisión",
+    "En revisión": "En revisión",
+  };
+  return aliases[String(value || "")] || String(value || "");
+}
+
+function canonicalPriority(value: unknown) {
+  const aliases: Record<string, string> = {
+    Critica: "Crítica",
+    "Crítica": "Crítica",
+  };
+  return aliases[String(value || "")] || String(value || "");
+}
+
+function canonicalType(value: unknown) {
+  const aliases: Record<string, string> = {
+    Optimizacion: "Optimización",
+    "Optimización": "Optimización",
+  };
+  return aliases[String(value || "")] || String(value || "");
+}
+
 const DEFAULT_STATE: AppState = {
   nextUserId: 2, nextCommentId: 1, nextAttachmentId: 1, nextTagId: 1, nextNotifId: 1,
   reportCounter: 1, patchCounter: 1,
@@ -93,6 +121,16 @@ function safeInit(s: AppState) {
   if (!Array.isArray(s.tags)) s.tags = DEFAULT_STATE.tags;
   if (!Array.isArray(s.notifications)) s.notifications = [];
   if (typeof s.kvSettings !== "object") s.kvSettings = {};
+  s.reports.forEach(report => {
+    report.status = canonicalStatus(report.status);
+    report.priority = canonicalPriority(report.priority);
+    report.type = canonicalType(report.type);
+    if (!Array.isArray(report.followers)) report.followers = [];
+    if (!Array.isArray(report.tags)) report.tags = [];
+    if (!Array.isArray(report.comments)) report.comments = [];
+    if (!Array.isArray(report.attachments)) report.attachments = [];
+    if (!Array.isArray(report.history)) report.history = [];
+  });
   // ensure admin always exists
   if (!s.users.find(u => u.id === 1)) {
     s.users.unshift(DEFAULT_STATE.users[0]);
@@ -132,7 +170,9 @@ function addNotif(type: string, msg: string, reportId: string, username: string)
 function hRegister(b: Record<string, unknown>) {
   const users = getUsers();
   const { name, username, password, role } = b as { name: string; username: string; password: string; role: string };
-  if (!name || !username || !password) return r({ error: "Todos los campos son requeridos." }, 400);
+  if (typeof name !== "string" || typeof username !== "string" || typeof password !== "string" || !name.trim() || !username.trim() || !password) {
+    return r({ error: "Todos los campos son requeridos." }, 400);
+  }
   if (users.find(u => u.username.toLowerCase() === username.toLowerCase())) return r({ error: "Ese usuario ya existe." }, 409);
   const rc = ROLE_COLORS[role] || ROLE_COLORS.Tester;
   const user: User = { id: state.nextUserId++, name, username, password, role: role || "Tester", color: rc.color, bg: rc.bg, avatar: "", discordWebhook: "", createdAt: new Date().toISOString() };
@@ -144,7 +184,10 @@ function hRegister(b: Record<string, unknown>) {
 function hLogin(b: Record<string, unknown>) {
   const users = getUsers();
   const { username, password } = b as { username: string; password: string };
-  const user = users.find(u => u.username.toLowerCase() === (username || "").toLowerCase() && u.password === password);
+  if (typeof username !== "string" || typeof password !== "string" || !username.trim() || !password) {
+    return r({ error: "Usuario y contraseña son requeridos." }, 400);
+  }
+  const user = users.find(u => u.username.toLowerCase() === username.trim().toLowerCase() && u.password === password);
   if (!user) return r({ error: "Usuario o contraseña incorrectos." }, 401);
   const { password: _, ...safe } = user;
   return r(safe);
@@ -172,9 +215,14 @@ function hListReports(url: URL) {
   const type = url.searchParams.get("type") || "";
   let filtered = [...reports];
   if (search) filtered = filtered.filter(r => r.title.toLowerCase().includes(search) || r.id.toLowerCase().includes(search));
-  if (status) filtered = filtered.filter(r => r.status === status);
-  if (priority) filtered = filtered.filter(r => r.priority === priority);
-  if (type) filtered = filtered.filter(r => r.type === type);
+  if (status) filtered = filtered.filter(r => canonicalStatus(r.status) === canonicalStatus(status));
+  if (priority) filtered = filtered.filter(r => canonicalPriority(r.priority) === canonicalPriority(priority));
+  if (type) filtered = filtered.filter(r => canonicalType(r.type) === canonicalType(type));
+  filtered.forEach(report => {
+    report.status = canonicalStatus(report.status);
+    report.priority = canonicalPriority(report.priority);
+    report.type = canonicalType(report.type);
+  });
   filtered.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   return r(filtered);
 }
@@ -183,9 +231,11 @@ function hCreateReport(b: Record<string, unknown>) {
   const reports = getReports();
   const users = getUsers();
   const { title, type, priority, description, evidence, author } = b as { title: string; type: string; priority: string; description: string; evidence?: string; author: string };
-  if (!title || !description || !author) return r({ error: "Título, descripción y autor son requeridos." }, 400);
+  if (typeof title !== "string" || typeof description !== "string" || typeof author !== "string" || !title.trim() || !description.trim() || !author.trim()) {
+    return r({ error: "Título, descripción y autor son requeridos." }, 400);
+  }
   const id = genRptId(), now = new Date().toISOString();
-  const report: Report = { id, title, type: type || "Bug", priority: priority || "Media", status: "Pendiente", description, evidence: evidence || "", author, assignee: null, followers: [author], tags: [], comments: [], attachments: [], history: [{ user: author, action: "creó el reporte", from: "", to: "", date: now }], createdAt: now, updatedAt: now };
+  const report: Report = { id, title: title.trim(), type: canonicalType(type || "Bug"), priority: canonicalPriority(priority || "Media"), status: "Pendiente", description: description.trim(), evidence: typeof evidence === "string" ? evidence : "", author: author.trim(), assignee: null, followers: [author.trim()], tags: [], comments: [], attachments: [], history: [{ user: author.trim(), action: "creó el reporte", from: "", to: "", date: now }], createdAt: now, updatedAt: now };
   reports.push(report);
   addNotif("new_report", `Nuevo reporte ${id}: ${title}`, id, author);
   users.filter(u => u.role === "CEO").forEach(u => addNotif("new_report", `Nuevo reporte ${id}: ${title} por ${author}`, id, u.username));
@@ -200,10 +250,11 @@ function hUpdateStatus(id: string, b: Record<string, unknown>) {
   const reports = getReports();
   const rep = reports.find(r => r.id === id); if (!rep) return nf();
   const { status, username } = b as { status: string; username: string };
-  if (!status) return r({ error: "Estado requerido" }, 400);
-  const old = rep.status; rep.status = status; rep.updatedAt = new Date().toISOString();
-  if (username) addHist(rep, username, "cambió el estado", old, status);
-  if (username) { const f = rep.followers.filter(f => f !== username); f.forEach(f => addNotif("status_change", `${rep.id}: ${username} cambió estado a "${status}"`, id, f)); if (!f.includes(rep.author) && rep.author !== username) addNotif("status_change", `${rep.id}: ${username} cambió estado a "${status}"`, id, rep.author); }
+  const nextStatus = canonicalStatus(status);
+  if (!STATUSES.includes(nextStatus as typeof STATUSES[number])) return r({ error: "Estado no válido" }, 400);
+  const old = canonicalStatus(rep.status); rep.status = nextStatus; rep.updatedAt = new Date().toISOString();
+  if (username) addHist(rep, username, "cambió el estado", old, nextStatus);
+  if (username) { const f = rep.followers.filter(f => f !== username); f.forEach(f => addNotif("status_change", `${rep.id}: ${username} cambió estado a "${nextStatus}"`, id, f)); if (!f.includes(rep.author) && rep.author !== username) addNotif("status_change", `${rep.id}: ${username} cambió estado a "${nextStatus}"`, id, rep.author); }
   return r(rep);
 }
 
@@ -277,14 +328,14 @@ function hStats() {
   const reports = getReports();
   const total = reports.length;
   return r({
-    total, pending: reports.filter(r => r.status === "Pendiente").length,
-    inRevision: reports.filter(r => r.status === "En revisión").length,
-    inDev: reports.filter(r => r.status === "En desarrollo").length,
-    testing: reports.filter(r => r.status === "Esperando pruebas").length,
-    solved: reports.filter(r => r.status === "Solucionado").length,
-    critical: reports.filter(r => r.priority === "Crítica").length,
-    priorities: ["Crítica", "Alta", "Media", "Baja"].map(p => ({ priority: p, count: reports.filter(r => r.priority === p).length })),
-    types: ["Bug", "Exploit", "Sugerencia", "Optimización", "Mejora"].map(t => ({ type: t, count: reports.filter(r => r.type === t).length })),
+    total, pending: reports.filter(r => canonicalStatus(r.status) === "Pendiente").length,
+     inRevision: reports.filter(r => canonicalStatus(r.status) === "En revisión").length,
+     inDev: reports.filter(r => canonicalStatus(r.status) === "En desarrollo").length,
+     testing: reports.filter(r => canonicalStatus(r.status) === "Esperando pruebas").length,
+     solved: reports.filter(r => canonicalStatus(r.status) === "Solucionado").length,
+     critical: reports.filter(r => canonicalPriority(r.priority) === "Crítica").length,
+     priorities: PRIORITIES.map(p => ({ priority: p, count: reports.filter(r => canonicalPriority(r.priority) === p).length })),
+     types: REPORT_TYPES.map(t => ({ type: t, count: reports.filter(r => canonicalType(r.type) === t).length })),
   });
 }
 
@@ -293,11 +344,11 @@ function hMetrics() {
   const now = new Date(), days: { date: string; total: number }[] = [];
   for (let i = 29; i >= 0; i--) { const d = new Date(now); d.setDate(d.getDate() - i); const ds = d.toISOString().slice(0, 10); days.push({ date: ds, total: reports.filter(r => r.createdAt.slice(0, 10) === ds).length }); }
   const wa = new Date(now); wa.setDate(wa.getDate() - 7);
-  const solved7 = reports.filter(r => r.status === "Solucionado" && r.updatedAt >= wa.toISOString()).length;
-  const byStatus = ["Pendiente", "En revisión", "En desarrollo", "Esperando pruebas", "Solucionado", "Cerrado"].map(s => ({ status: s, count: reports.filter(r => r.status === s).length }));
-  const byPriority = ["Crítica", "Alta", "Media", "Baja"].map(p => ({ priority: p, count: reports.filter(r => r.priority === p).length }));
+  const solved7 = reports.filter(r => canonicalStatus(r.status) === "Solucionado" && r.updatedAt >= wa.toISOString()).length;
+  const byStatus = STATUSES.map(s => ({ status: s, count: reports.filter(r => canonicalStatus(r.status) === s).length }));
+  const byPriority = PRIORITIES.map(p => ({ priority: p, count: reports.filter(r => canonicalPriority(r.priority) === p).length }));
   const dm: Record<string, { assignee: string; open: number; closed: number; total: number }> = {};
-  reports.forEach(r => { if (!r.assignee) return; if (!dm[r.assignee]) dm[r.assignee] = { assignee: r.assignee, open: 0, closed: 0, total: 0 }; dm[r.assignee].total++; if (r.status === "Solucionado" || r.status === "Cerrado") dm[r.assignee].closed++; else dm[r.assignee].open++; });
+  reports.forEach(r => { if (!r.assignee) return; if (!dm[r.assignee]) dm[r.assignee] = { assignee: r.assignee, open: 0, closed: 0, total: 0 }; dm[r.assignee].total++; if (canonicalStatus(r.status) === "Solucionado" || canonicalStatus(r.status) === "Cerrado") dm[r.assignee].closed++; else dm[r.assignee].open++; });
   return r({ solved7, avgResolutionDays: "—", days, byStatus, byPriority, byDev: Object.values(dm).sort((a, b) => b.total - a.total) });
 }
 
