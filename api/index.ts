@@ -144,16 +144,6 @@ function safeInit(s: AppState) {
     if (!Array.isArray(report.attachments)) { report.attachments = []; changed = true; }
     if (!Array.isArray(report.history)) { report.history = []; changed = true; }
   });
-  // Remove only the legacy admin account, and only when another CEO remains.
-  // This migration is persisted so the account cannot reappear after a restart.
-  const hasAnotherCeo = s.users.some(u => u.username.toLowerCase() !== "admin" && u.role === "CEO");
-  if (hasAnotherCeo) {
-    const usersWithoutLegacyAdmin = s.users.filter(u => u.username.toLowerCase() !== "admin");
-    if (usersWithoutLegacyAdmin.length !== s.users.length) {
-      s.users = usersWithoutLegacyAdmin;
-      changed = true;
-    }
-  }
   return changed;
 }
 
@@ -274,12 +264,22 @@ function hLogin(b: Record<string, unknown>) {
   return r({ user: publicUser(user), token: createSessionToken(user) });
 }
 
-function hUpdateUser(id: number, b: Record<string, unknown>, sessionUserId?: number) {
+function hUpdateUser(id: number, b: Record<string, unknown>, sessionUserId?: number, canManageRole = false) {
   const users = getUsers();
   const idx = users.findIndex(u => u.id === id);
   if (idx === -1) return nf();
   const user = users[idx];
-  const { name, currentPassword, newPassword, avatar, discordWebhook } = b as { name?: string; currentPassword?: string; newPassword?: string; avatar?: string; discordWebhook?: string };
+  const { name, currentPassword, newPassword, avatar, discordWebhook, role } = b as { name?: string; currentPassword?: string; newPassword?: string; avatar?: string; discordWebhook?: string; role?: string };
+  if (role !== undefined) {
+    if (!canManageRole) return forbidden();
+    if (!Object.prototype.hasOwnProperty.call(ROLE_COLORS, role)) return r({ error: "Rol no válido." }, 400);
+    if (user.role === "CEO" && role !== "CEO" && users.filter(u => u.role === "CEO").length <= 1) {
+      return r({ error: "No se puede quitar el último CEO." }, 400);
+    }
+    user.role = role;
+    user.color = ROLE_COLORS[role].color;
+    user.bg = ROLE_COLORS[role].bg;
+  }
   if (newPassword && !currentPassword) return r({ error: "Ingresá tu contraseña actual para cambiarla." }, 400);
   if (newPassword && newPassword.length < 6) return r({ error: "La nueva contraseña debe tener al menos 6 caracteres." }, 400);
   if (avatar !== undefined && !isSafeAvatar(avatar)) return r({ error: "Avatar no válido." }, 400);
@@ -291,6 +291,21 @@ function hUpdateUser(id: number, b: Record<string, unknown>, sessionUserId?: num
     ...publicUser(user),
     ...(sessionUserId === id ? { token: createSessionToken(user) } : {}),
   });
+}
+
+function hDeleteUser(id: number, sessionUserId: number) {
+  const users = getUsers();
+  const idx = users.findIndex(u => u.id === id);
+  if (idx === -1) return nf();
+  const target = users[idx];
+  if (target.id === sessionUserId && !(target.role === "CEO" && users.some(u => u.id !== target.id && u.role === "CEO"))) {
+    return r({ error: "No podés eliminar tu propia cuenta." }, 400);
+  }
+  if (target.role === "CEO" && users.filter(u => u.role === "CEO").length <= 1) {
+    return r({ error: "No se puede eliminar el último CEO." }, 400);
+  }
+  users.splice(idx, 1);
+  return r({ ok: true });
 }
 
 function hListReports(url: URL) {
@@ -469,7 +484,13 @@ async function handleAll(req: Request): Promise<Response> {
       if (!user) return unauthorized();
       const id = Number(path[1]);
       if (!Number.isInteger(id) || (user.id !== id && !hasRole(user, "CEO"))) return forbidden();
-      return hUpdateUser(id, body, user.id);
+      return hUpdateUser(id, body, user.id, hasRole(user, "CEO"));
+    }
+    if (path[0] === "users" && path.length === 2 && method === "DELETE") {
+      if (!user || !hasRole(user, "CEO")) return user ? forbidden() : unauthorized();
+      const id = Number(path[1]);
+      if (!Number.isInteger(id)) return nf();
+      return hDeleteUser(id, user.id);
     }
     // Settings
     if (path[0] === "settings" && method === "GET") {
