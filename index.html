@@ -2071,6 +2071,7 @@ const API = '/api';
 
 async function api(url, options = {}) {
   const res = await fetch(API + url, {
+    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     ...options,
     body: options.body ? JSON.stringify(options.body) : undefined
@@ -2090,6 +2091,16 @@ let currentUser = null;
 let usersCache = [];
 let reportsCache = [];
 let patchesCache = [];
+
+const SESSION_KEY = 'legacy-roleplay-session';
+
+function saveSession() {
+  if (currentUser) localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
+}
+
+function clearSession() {
+  localStorage.removeItem(SESSION_KEY);
+}
 
 // ════════════════════════════════════════════
 // AUTH
@@ -2139,21 +2150,33 @@ async function doRegister() {
 async function doLogin() {
   const u = document.getElementById('login-user').value.trim();
   const p = document.getElementById('login-pass').value;
+  const errorEl = document.getElementById('auth-error');
+  errorEl.style.display = 'none';
+  if (!u || !p) {
+    errorEl.textContent = 'Ingresá tu usuario y contraseña.';
+    errorEl.style.display = 'block';
+    return;
+  }
   try {
     currentUser = await api('/login', {
       method: 'POST',
       body: { username: u, password: p }
     });
+    saveSession();
     document.getElementById('auth-screen').style.display = 'none';
     document.getElementById('app').style.display = 'block';
-    initApp();
+    await initApp();
   } catch (e) {
-    document.getElementById('auth-error').style.display = 'block';
+    currentUser = null;
+    clearSession();
+    errorEl.textContent = e.message || 'No se pudo iniciar sesión.';
+    errorEl.style.display = 'block';
   }
 }
 
 function doLogout() {
   currentUser = null;
+  clearSession();
   document.getElementById('auth-screen').style.display = 'flex';
   document.getElementById('app').style.display = 'none';
   document.getElementById('login-pass').value = '';
@@ -2161,6 +2184,23 @@ function doLogout() {
 }
 
 document.getElementById('login-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+async function restoreSession() {
+  const saved = localStorage.getItem(SESSION_KEY);
+  if (!saved) return;
+  try {
+    currentUser = JSON.parse(saved);
+    if (!currentUser || !currentUser.id || !currentUser.name) throw new Error('Sesión inválida');
+    document.getElementById('auth-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    await initApp();
+  } catch {
+    currentUser = null;
+    clearSession();
+    document.getElementById('auth-screen').style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
+  }
+}
 
 // ════════════════════════════════════════════
 // APP INIT
@@ -2257,6 +2297,7 @@ function toggleMobileMenu() {
 async function renderDashboard() {
   const stats = await api('/stats');
   const allReports = await api('/reports');
+  reportsCache = allReports;
 
   const statsConfig = [
     { icon: '📋', label: 'Total reportes', value: stats.total, color: 'var(--accent)' },
@@ -2286,8 +2327,8 @@ async function renderDashboard() {
       '<td>' + statusBadge(r.status) + '</td>' +
     '</tr>').join('') + '</tbody></table>';
 
-  const priorities = ['Critica', 'Alta', 'Media', 'Baja'];
-  const pColors = { Critica: 'var(--red)', Alta: 'var(--orange)', Media: 'var(--yellow)', Baja: 'var(--green)' };
+  const priorities = ['Crítica', 'Alta', 'Media', 'Baja'];
+  const pColors = { 'Crítica': 'var(--red)', Alta: 'var(--orange)', Media: 'var(--yellow)', Baja: 'var(--green)' };
   document.getElementById('priority-breakdown').innerHTML = priorities.map(p => {
     const count = (stats.priorities || []).find(x => x.priority === p)?.count || 0;
     const pct = stats.total ? Math.round((count / stats.total) * 100) : 0;
@@ -2300,8 +2341,8 @@ async function renderDashboard() {
     '</div>';
   }).join('');
 
-  const types = ['Bug', 'Exploit', 'Sugerencia', 'Optimizacion', 'Mejora'];
-  const tColors = { Bug: 'var(--red)', Exploit: 'var(--orange)', Sugerencia: 'var(--blue)', Optimizacion: 'var(--cyan)', Mejora: 'var(--purple)' };
+  const types = ['Bug', 'Exploit', 'Sugerencia', 'Optimización', 'Mejora'];
+  const tColors = { Bug: 'var(--red)', Exploit: 'var(--orange)', Sugerencia: 'var(--blue)', 'Optimización': 'var(--cyan)', Mejora: 'var(--purple)' };
   document.getElementById('type-breakdown').innerHTML = types.map(t => {
     const count = (stats.types || []).find(x => x.type === t)?.count || 0;
     const pct = stats.total ? Math.round((count / stats.total) * 100) : 0;
@@ -2372,9 +2413,9 @@ function updatePendingBadge() {
 // KANBAN
 // ════════════════════════════════════════════
 
-const STATUSES = ['Pendiente', 'En revision', 'En desarrollo', 'Esperando pruebas', 'Solucionado', 'Cerrado'];
+const STATUSES = ['Pendiente', 'En revisión', 'En desarrollo', 'Esperando pruebas', 'Solucionado', 'Cerrado'];
 const STATUS_COLORS = {
-  'Pendiente': 'var(--text-2)', 'En revision': 'var(--blue)', 'En desarrollo': 'var(--purple)',
+  'Pendiente': 'var(--text-2)', 'En revisión': 'var(--blue)', 'En desarrollo': 'var(--purple)',
   'Esperando pruebas': 'var(--yellow)', 'Solucionado': 'var(--green)', 'Cerrado': 'var(--text-3)'
 };
 
@@ -2762,19 +2803,23 @@ async function toggleFollow(id) {
 // ════════════════════════════════════════════
 
 function priorityBadge(p) {
-  const map = { Critica: 'critica', Alta: 'alta', Media: 'media', Baja: 'baja' };
-  const icons = { Critica: '🔥', Alta: '⚡', Media: '⬆️', Baja: '⬇️' };
-  return '<span class="badge priority-' + map[p] + '">' + icons[p] + ' ' + p + '</span>';
+  const aliases = { Critica: 'Crítica' };
+  const value = aliases[p] || p;
+  const map = { 'Crítica': 'critica', Alta: 'alta', Media: 'media', Baja: 'baja' };
+  const icons = { 'Crítica': '🔥', Alta: '⚡', Media: '⬆️', Baja: '⬇️' };
+  return '<span class="badge priority-' + (map[value] || 'media') + '">' + (icons[value] || '') + ' ' + value + '</span>';
 }
 
 function statusBadge(s) {
-  const map = { 'Pendiente': 'pendiente', 'En revision': 'en-revision', 'En desarrollo': 'en-desarrollo', 'Esperando pruebas': 'esperando-pruebas', 'Solucionado': 'solucionado', 'Cerrado': 'cerrado' };
-  return '<span class="badge status-' + map[s] + '">' + s + '</span>';
+  const value = s === 'En revision' ? 'En revisión' : s;
+  const map = { 'Pendiente': 'pendiente', 'En revisión': 'en-revision', 'En desarrollo': 'en-desarrollo', 'Esperando pruebas': 'esperando-pruebas', 'Solucionado': 'solucionado', 'Cerrado': 'cerrado' };
+  return '<span class="badge status-' + (map[value] || 'pendiente') + '">' + value + '</span>';
 }
 
 function typeBadge(t) {
-  const map = { Bug: 'bug', Exploit: 'exploit', Sugerencia: 'sugerencia', Optimizacion: 'optimizacion', Mejora: 'mejora' };
-  return '<span class="badge type-' + map[t] + '">' + t + '</span>';
+  const value = t === 'Optimizacion' ? 'Optimización' : t;
+  const map = { Bug: 'bug', Exploit: 'exploit', Sugerencia: 'sugerencia', 'Optimización': 'optimizacion', Mejora: 'mejora' };
+  return '<span class="badge type-' + (map[value] || 'bug') + '">' + value + '</span>';
 }
 
 function formatDate(iso) {
@@ -3119,7 +3164,7 @@ async function renderMetrics() {
     </div>`;
   }).join('');
 
-  const statusColors = { 'Pendiente':'#94a3b8','En revision':'#60a5fa','En desarrollo':'#a78bfa','Esperando pruebas':'#facc15','Solucionado':'#34d399','Cerrado':'#64748b' };
+  const statusColors = { 'Pendiente':'#94a3b8','En revisión':'#60a5fa','En desarrollo':'#a78bfa','Esperando pruebas':'#facc15','Solucionado':'#34d399','Cerrado':'#64748b' };
   const totalS = (m.byStatus||[]).reduce((s,x) => s + x.count, 0) || 1;
   document.getElementById('metrics-by-status').innerHTML = '<div class="dist-list">' +
     (m.byStatus||[]).map(x => {
@@ -3309,7 +3354,10 @@ async function loadAuthStats() {
   } catch {}
 }
 
-document.addEventListener('DOMContentLoaded', loadAuthStats);
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadAuthStats();
+  await restoreSession();
+});
 
 </script>
 </body>
