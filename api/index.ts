@@ -1,5 +1,6 @@
 export const runtime = "nodejs";
 import { Redis } from "@upstash/redis";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 let redis: Redis | null = null;
 try {
@@ -121,6 +122,13 @@ function safeInit(s: AppState) {
   if (!Array.isArray(s.tags)) s.tags = DEFAULT_STATE.tags;
   if (!Array.isArray(s.notifications)) s.notifications = [];
   if (typeof s.kvSettings !== "object") s.kvSettings = {};
+  if (!Number.isInteger(s.nextUserId) || s.nextUserId < 1) s.nextUserId = Math.max(1, ...s.users.map(u => u.id + 1));
+  if (!Number.isInteger(s.nextCommentId) || s.nextCommentId < 1) s.nextCommentId = Math.max(1, ...s.reports.flatMap(r => (r.comments || []).map(c => c.id + 1)));
+  if (!Number.isInteger(s.nextAttachmentId) || s.nextAttachmentId < 1) s.nextAttachmentId = Math.max(1, ...s.reports.flatMap(r => (r.attachments || []).map(a => a.id + 1)));
+  if (!Number.isInteger(s.nextTagId) || s.nextTagId < 1) s.nextTagId = Math.max(1, ...s.tags.map(t => t.id + 1));
+  if (!Number.isInteger(s.nextNotifId) || s.nextNotifId < 1) s.nextNotifId = Math.max(1, ...s.notifications.map(n => n.id + 1));
+  if (!Number.isInteger(s.reportCounter) || s.reportCounter < 1) s.reportCounter = Math.max(1, ...s.reports.map(r => Number(r.id.replace(/^BUG-/, "")) + 1).filter(Number.isFinite));
+  if (!Number.isInteger(s.patchCounter) || s.patchCounter < 1) s.patchCounter = Math.max(1, ...s.patches.map(p => Number(p.id.replace(/^PATCH-/, "")) + 1).filter(Number.isFinite));
   s.reports.forEach(report => {
     report.status = canonicalStatus(report.status);
     report.priority = canonicalPriority(report.priority);
@@ -152,6 +160,69 @@ function r(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
 function nf() { return r({ error: "Not found" }, 404); }
+function unauthorized() { return r({ error: "Sesión requerida." }, 401); }
+function forbidden() { return r({ error: "No tenés permisos para realizar esta acción." }, 403); }
+
+function publicUser(user: User) {
+  const { password: _, discordWebhook: __, ...safe } = user;
+  return safe;
+}
+
+function sessionKey(user: User) {
+  return `${process.env.SESSION_SECRET || "legacy-roleplay"}:${user.password}`;
+}
+
+function createSessionToken(user: User) {
+  const payload = Buffer.from(JSON.stringify({ id: user.id, issuedAt: Date.now() })).toString("base64url");
+  const signature = createHmac("sha256", sessionKey(user)).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+function getAuthUser(req: Request) {
+  const header = req.headers.get("authorization") || "";
+  if (!header.startsWith("Bearer ")) return null;
+  const [payload, signature] = header.slice(7).split(".");
+  if (!payload || !signature) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { id?: number; issuedAt?: number };
+    if (!parsed.id || !parsed.issuedAt || Date.now() - parsed.issuedAt > 7 * 24 * 60 * 60 * 1000) return null;
+    const user = getUsers().find(u => u.id === parsed.id);
+    if (!user) return null;
+    const expected = createHmac("sha256", sessionKey(user)).update(payload).digest("base64url");
+    const left = Buffer.from(signature);
+    const right = Buffer.from(expected);
+    if (left.length !== right.length || !timingSafeEqual(left, right)) return null;
+    return user;
+  } catch {
+    return null;
+  }
+}
+
+function requireUser(req: Request) {
+  return getAuthUser(req);
+}
+
+function hasRole(user: User | null, ...roles: string[]) {
+  return !!user && roles.includes(user.role);
+}
+
+function isSafeHttpUrl(value: unknown) {
+  if (typeof value !== "string" || value.length > 2048) return false;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isSafeAvatar(value: unknown) {
+  if (value === "") return true;
+  if (isSafeHttpUrl(value)) return true;
+  return typeof value === "string" &&
+    value.length <= 700_000 &&
+    /^data:image\/(?:png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(value);
+}
 
 function genRptId() { return `BUG-${String(state.reportCounter++).padStart(3, "0")}`; }
 function genPatchId() { return `PATCH-${String(state.patchCounter++).padStart(3, "0")}`; }
@@ -170,15 +241,14 @@ function addNotif(type: string, msg: string, reportId: string, username: string)
 function hRegister(b: Record<string, unknown>) {
   const users = getUsers();
   const { name, username, password, role } = b as { name: string; username: string; password: string; role: string };
-  if (typeof name !== "string" || typeof username !== "string" || typeof password !== "string" || !name.trim() || !username.trim() || !password) {
+  if (typeof name !== "string" || typeof username !== "string" || typeof password !== "string" || !name.trim() || !username.trim() || password.length < 6) {
     return r({ error: "Todos los campos son requeridos." }, 400);
   }
   if (users.find(u => u.username.toLowerCase() === username.toLowerCase())) return r({ error: "Ese usuario ya existe." }, 409);
-  const rc = ROLE_COLORS[role] || ROLE_COLORS.Tester;
-  const user: User = { id: state.nextUserId++, name, username, password, role: role || "Tester", color: rc.color, bg: rc.bg, avatar: "", discordWebhook: "", createdAt: new Date().toISOString() };
+  const rc = ROLE_COLORS.Tester;
+  const user: User = { id: state.nextUserId++, name: name.trim(), username: username.trim(), password, role: "Tester", color: rc.color, bg: rc.bg, avatar: "", discordWebhook: "", createdAt: new Date().toISOString() };
   users.push(user);
-  const { password: _, ...safe } = user;
-  return r(safe, 201);
+  return r(publicUser(user), 201);
 }
 
 function hLogin(b: Record<string, unknown>) {
@@ -189,22 +259,26 @@ function hLogin(b: Record<string, unknown>) {
   }
   const user = users.find(u => u.username.toLowerCase() === username.trim().toLowerCase() && u.password === password);
   if (!user) return r({ error: "Usuario o contraseña incorrectos." }, 401);
-  const { password: _, ...safe } = user;
-  return r(safe);
+  return r({ user: publicUser(user), token: createSessionToken(user) });
 }
 
-function hUpdateUser(id: number, b: Record<string, unknown>) {
+function hUpdateUser(id: number, b: Record<string, unknown>, sessionUserId?: number) {
   const users = getUsers();
   const idx = users.findIndex(u => u.id === id);
   if (idx === -1) return nf();
   const user = users[idx];
   const { name, currentPassword, newPassword, avatar, discordWebhook } = b as { name?: string; currentPassword?: string; newPassword?: string; avatar?: string; discordWebhook?: string };
+  if (newPassword && !currentPassword) return r({ error: "Ingresá tu contraseña actual para cambiarla." }, 400);
+  if (newPassword && newPassword.length < 6) return r({ error: "La nueva contraseña debe tener al menos 6 caracteres." }, 400);
+  if (avatar !== undefined && !isSafeAvatar(avatar)) return r({ error: "Avatar no válido." }, 400);
   if (currentPassword) { if (currentPassword !== user.password) return r({ error: "Contraseña actual incorrecta." }, 400); if (newPassword) user.password = newPassword; }
   if (name) user.name = name;
   if (avatar !== undefined) user.avatar = avatar;
   if (discordWebhook !== undefined) user.discordWebhook = discordWebhook;
-  const { password: _, ...safe } = user;
-  return r(safe);
+  return r({
+    ...publicUser(user),
+    ...(sessionUserId === id ? { token: createSessionToken(user) } : {}),
+  });
 }
 
 function hListReports(url: URL) {
@@ -234,6 +308,9 @@ function hCreateReport(b: Record<string, unknown>) {
   if (typeof title !== "string" || typeof description !== "string" || typeof author !== "string" || !title.trim() || !description.trim() || !author.trim()) {
     return r({ error: "Título, descripción y autor son requeridos." }, 400);
   }
+  if (type && !REPORT_TYPES.includes(canonicalType(type) as typeof REPORT_TYPES[number])) return r({ error: "Tipo no válido." }, 400);
+  if (priority && !PRIORITIES.includes(canonicalPriority(priority) as typeof PRIORITIES[number])) return r({ error: "Prioridad no válida." }, 400);
+  if (evidence && !isSafeHttpUrl(evidence)) return r({ error: "La evidencia debe ser una URL http o https válida." }, 400);
   const id = genRptId(), now = new Date().toISOString();
   const report: Report = { id, title: title.trim(), type: canonicalType(type || "Bug"), priority: canonicalPriority(priority || "Media"), status: "Pendiente", description: description.trim(), evidence: typeof evidence === "string" ? evidence : "", author: author.trim(), assignee: null, followers: [author.trim()], tags: [], comments: [], attachments: [], history: [{ user: author.trim(), action: "creó el reporte", from: "", to: "", date: now }], createdAt: now, updatedAt: now };
   reports.push(report);
@@ -298,7 +375,7 @@ function hAddAttachment(id: string, b: Record<string, unknown>) {
   const reports = getReports();
   const rep = reports.find(r => r.id === id); if (!rep) return nf();
   const { url, name, added_by } = b as { url: string; name: string; added_by: string };
-  if (!url) return r({ error: "URL requerida" }, 400);
+  if (!isSafeHttpUrl(url)) return r({ error: "La URL debe ser http o https válida." }, 400);
   if (!rep.attachments) rep.attachments = [];
   const a: Attachment = { id: state.nextAttachmentId++, url, name: name || "Adjunto", added_by: added_by || "Desconocido", created_at: new Date().toISOString() };
   rep.attachments.push(a); if (added_by) addHist(rep, added_by, "agregó un adjunto");
@@ -367,44 +444,128 @@ async function handleAll(req: Request): Promise<Response> {
   }
 
   try {
+    const user = requireUser(req);
     // Auth
     if (path[0] === "register" && method === "POST") return hRegister(body);
     if (path[0] === "login" && method === "POST") return hLogin(body);
     // Users
-    if (path[0] === "users" && path.length === 1 && method === "GET") return r(getUsers().map(({ password, ...u }) => u));
-    if (path[0] === "users" && path.length === 2 && method === "PUT") return hUpdateUser(parseInt(path[1]), body);
+    if (path[0] === "users" && path.length === 1 && method === "GET") {
+      if (!user) return unauthorized();
+      return r(getUsers().map(publicUser));
+    }
+    if (path[0] === "users" && path.length === 2 && method === "PUT") {
+      if (!user) return unauthorized();
+      const id = Number(path[1]);
+      if (!Number.isInteger(id) || (user.id !== id && !hasRole(user, "CEO"))) return forbidden();
+      return hUpdateUser(id, body, user.id);
+    }
     // Settings
-    if (path[0] === "settings" && method === "GET") return r(getKvSettings());
-    if (path[0] === "settings" && method === "POST") { const { key, value } = body as { key: string; value: string }; if (key) getKvSettings()[key] = value || ""; return r({ ok: true }); }
+    if (path[0] === "settings" && method === "GET") {
+      if (!user || !hasRole(user, "CEO")) return user ? forbidden() : unauthorized();
+      return r(getKvSettings());
+    }
+    if (path[0] === "settings" && method === "POST") {
+      if (!user || !hasRole(user, "CEO")) return user ? forbidden() : unauthorized();
+      const { key, value } = body as { key: string; value: string };
+      if (key) getKvSettings()[key] = value || "";
+      return r({ ok: true });
+    }
     // Tags
-    if (path[0] === "tags" && path.length === 1 && method === "GET") return r(getTags());
-    if (path[0] === "tags" && path.length === 1 && method === "POST") { const { name, color } = body as { name: string; color: string }; if (!name) return r({ error: "Nombre requerido" }, 400); const tags = getTags(); const t: Tag = { id: state.nextTagId++, name, color: color || "#7c3aed" }; tags.push(t); return r(t, 201); }
-    if (path[0] === "tags" && path.length === 2 && method === "DELETE") { const tags = getTags(); const tid = parseInt(path[1]); const ti = tags.findIndex(t => t.id === tid); if (ti === -1) return nf(); tags.splice(ti, 1); return r({ ok: true }); }
+    if (path[0] === "tags" && path.length === 1 && method === "GET") {
+      if (!user) return unauthorized();
+      return r(getTags());
+    }
+    if (path[0] === "tags" && path.length === 1 && method === "POST") {
+      if (!user || !hasRole(user, "CEO")) return user ? forbidden() : unauthorized();
+      const { name, color } = body as { name: string; color: string };
+      if (!name || !name.trim()) return r({ error: "Nombre requerido" }, 400);
+      const tags = getTags();
+      const t: Tag = { id: state.nextTagId++, name: name.trim(), color: color || "#7c3aed" };
+      tags.push(t);
+      return r(t, 201);
+    }
+    if (path[0] === "tags" && path.length === 2 && method === "DELETE") {
+      if (!user || !hasRole(user, "CEO")) return user ? forbidden() : unauthorized();
+      const tags = getTags();
+      const tid = parseInt(path[1]);
+      const ti = tags.findIndex(t => t.id === tid);
+      if (ti === -1) return nf();
+      tags.splice(ti, 1);
+      return r({ ok: true });
+    }
     // Reports
-    if (path[0] === "reports" && path.length === 1 && method === "GET") return hListReports(url);
-    if (path[0] === "reports" && path.length === 1 && method === "POST") return hCreateReport(body);
-    if (path[0] === "reports" && path.length === 2 && method === "GET") return hGetReport(path[1]);
-    if (path[0] === "reports" && path.length === 2 && method === "DELETE") return hDeleteReport(path[1]);
-    if (path[0] === "reports" && path.length === 3 && path[2] === "status" && method === "PUT") return hUpdateStatus(path[1], body);
-    if (path[0] === "reports" && path.length === 3 && path[2] === "assign" && method === "POST") return hAssign(path[1], body);
-    if (path[0] === "reports" && path.length === 3 && path[2] === "assign" && method === "DELETE") return hUnassign(path[1]);
-    if (path[0] === "reports" && path.length === 3 && path[2] === "comments" && method === "POST") return hAddComment(path[1], body);
-    if (path[0] === "reports" && path.length === 3 && path[2] === "follow" && method === "POST") return hFollow(path[1], body);
-    if (path[0] === "reports" && path.length === 3 && path[2] === "attachments" && method === "POST") return hAddAttachment(path[1], body);
-    if (path[0] === "reports" && path.length === 4 && path[2] === "attachments" && method === "DELETE") return hDeleteAttachment(path[1], parseInt(path[3]));
+    if (path[0] === "reports" && path.length === 1 && method === "GET") {
+      if (!user) return unauthorized();
+      return hListReports(url);
+    }
+    if (path[0] === "reports" && path.length === 1 && method === "POST") {
+      if (!user) return unauthorized();
+      return hCreateReport({ ...body, author: user.name });
+    }
+    if (path[0] === "reports" && path.length === 2 && method === "GET") {
+      if (!user) return unauthorized();
+      return hGetReport(path[1]);
+    }
+    if (path[0] === "reports" && path.length === 2 && method === "DELETE") {
+      if (!user || !hasRole(user, "CEO")) return user ? forbidden() : unauthorized();
+      return hDeleteReport(path[1]);
+    }
+    if (path[0] === "reports" && path.length === 3 && path[2] === "status" && method === "PUT") {
+      if (!user || !hasRole(user, "CEO", "Developer")) return user ? forbidden() : unauthorized();
+      return hUpdateStatus(path[1], { ...body, username: user.name });
+    }
+    if (path[0] === "reports" && path.length === 3 && path[2] === "assign" && method === "POST") {
+      if (!user || !hasRole(user, "Developer")) return user ? forbidden() : unauthorized();
+      return hAssign(path[1], { username: user.name });
+    }
+    if (path[0] === "reports" && path.length === 3 && path[2] === "assign" && method === "DELETE") {
+      if (!user || !hasRole(user, "CEO")) return user ? forbidden() : unauthorized();
+      return hUnassign(path[1]);
+    }
+    if (path[0] === "reports" && path.length === 3 && path[2] === "comments" && method === "POST") {
+      if (!user) return unauthorized();
+      return hAddComment(path[1], { ...body, author: user.name });
+    }
+    if (path[0] === "reports" && path.length === 3 && path[2] === "follow" && method === "POST") {
+      if (!user) return unauthorized();
+      return hFollow(path[1], { username: user.name });
+    }
+    if (path[0] === "reports" && path.length === 3 && path[2] === "attachments" && method === "POST") {
+      if (!user || !hasRole(user, "CEO", "Developer")) return user ? forbidden() : unauthorized();
+      return hAddAttachment(path[1], { ...body, added_by: user.name });
+    }
+    if (path[0] === "reports" && path.length === 4 && path[2] === "attachments" && method === "DELETE") {
+      if (!user || !hasRole(user, "CEO", "Developer")) return user ? forbidden() : unauthorized();
+      return hDeleteAttachment(path[1], parseInt(path[3]));
+    }
     // Patches
     if (path[0] === "patches" && path.length === 1 && method === "GET") return r(getPatches().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-    if (path[0] === "patches" && path.length === 1 && method === "POST") return hCreatePatch(body);
+    if (path[0] === "patches" && path.length === 1 && method === "POST") {
+      if (!user || !hasRole(user, "CEO", "Developer")) return user ? forbidden() : unauthorized();
+      return hCreatePatch(body);
+    }
     // Stats / Metrics
     if (path[0] === "stats" && method === "GET") return hStats();
     if (path[0] === "metrics" && method === "GET") return hMetrics();
     // Notifications
     if (path[0] === "notifications" && path.length === 1 && method === "GET") {
+      if (!user) return unauthorized();
       const uname = url.searchParams.get("username") || "";
-      return r(getNotifications().filter(n => n.username === uname).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
+      if (uname !== user.name && uname !== user.username) return forbidden();
+      return r(getNotifications().filter(n => n.username === user.name || n.username === user.username).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
     }
-    if (path[0] === "notifications" && path.length === 3 && path[2] === "read" && method === "PUT") { const nid = parseInt(path[1]); const n = getNotifications().find(n => n.id === nid); if (n) n.read = 1; return r({ ok: true }); }
-    if (path[0] === "notifications" && path.length === 2 && path[1] === "read-all" && method === "PUT") { const { username } = body as { username: string }; getNotifications().forEach(n => { if (n.username === username) n.read = 1; }); return r({ ok: true }); }
+    if (path[0] === "notifications" && path.length === 3 && path[2] === "read" && method === "PUT") {
+      if (!user) return unauthorized();
+      const nid = parseInt(path[1]);
+      const n = getNotifications().find(n => n.id === nid);
+      if (n && (n.username === user.name || n.username === user.username)) n.read = 1;
+      return r({ ok: true });
+    }
+    if (path[0] === "notifications" && path.length === 2 && path[1] === "read-all" && method === "PUT") {
+      if (!user) return unauthorized();
+      getNotifications().forEach(n => { if (n.username === user.name || n.username === user.username) n.read = 1; });
+      return r({ ok: true });
+    }
 
     return nf();
   } catch (e: unknown) {
