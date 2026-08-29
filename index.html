@@ -1237,6 +1237,10 @@
   .user-card .user-name { font-size: 16px; font-weight: 700; color: var(--text-0); margin-bottom: 4px; }
   .user-card .user-stats { font-size: 12px; color: var(--text-2); margin-top: 8px; }
 
+  .role-select:hover { opacity: 0.85; }
+  .role-select:focus { outline: none; box-shadow: 0 0 0 2px rgba(255,255,255,0.15); }
+  .role-select option { background: #12101a; color: var(--text-0); }
+
   /* ─── KANBAN ─── */
   .kanban-board {
     display: grid;
@@ -2846,20 +2850,44 @@ async function createPatch() {
 async function renderUsers() {
   const reports = await api('/reports');
   const roleColors = { CEO: { color: '#e8c547', bg: 'rgba(232,197,71,0.15)' }, Tester: { color: '#58a6ff', bg: 'rgba(88,166,255,0.15)' }, Developer: { color: '#bc8cff', bg: 'rgba(188,140,255,0.15)' } };
+  const isCEO = currentUser && currentUser.role === 'CEO';
   document.getElementById('users-grid').innerHTML = usersCache.map(u => {
     const rc = roleColors[u.role] || { color: '#fff', bg: 'rgba(255,255,255,0.1)' };
     const myReports = reports.filter(r => r.author === u.name).length;
     const assigned = reports.filter(r => r.assignee === u.name).length;
     const solved = reports.filter(r => r.assignee === u.name && r.status === 'Solucionado').length;
+    let roleHTML;
+    if (isCEO && u.id !== currentUser.id) {
+      roleHTML = '<select class="role-select" style="background:' + rc.bg + ';color:' + rc.color + ';border:1px solid ' + rc.color + '33;padding:4px 8px;border-radius:4px;font-size:11px;font-family:JetBrains Mono,monospace;cursor:pointer;appearance:auto" onchange="changeUserRole(' + u.id + ', this.value)">' +
+        '<option value="CEO"' + (u.role === 'CEO' ? ' selected' : '') + '>CEO</option>' +
+        '<option value="Developer"' + (u.role === 'Developer' ? ' selected' : '') + '>Developer</option>' +
+        '<option value="Tester"' + (u.role === 'Tester' ? ' selected' : '') + '>Tester</option>' +
+      '</select>';
+    } else {
+      roleHTML = '<div class="role-badge" style="background:' + rc.bg + ';color:' + rc.color + ';display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-family:JetBrains Mono,monospace">' + u.role + '</div>';
+    }
     return '<div class="user-card">' +
       '<div class="avatar-lg" style="background:' + rc.bg + ';color:' + rc.color + '">' + (u.avatar ? '<img src="' + u.avatar + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%">' : u.name[0]) + '</div>' +
       '<div class="user-name">' + u.name + '</div>' +
-      '<div class="role-badge" style="background:' + rc.bg + ';color:' + rc.color + ';display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-family:JetBrains Mono,monospace">' + u.role + '</div>' +
+      roleHTML +
       '<div class="user-stats">' +
         '📋 ' + myReports + ' reportes · ⚙️ ' + assigned + ' asignados · ✅ ' + solved + ' resueltos' +
       '</div>' +
     '</div>';
   }).join('');
+}
+
+async function changeUserRole(userId, newRole) {
+  try {
+    await api('/users/' + userId, { method: 'PUT', body: { role: newRole } });
+    const u = usersCache.find(u => u.id === userId);
+    if (u) u.role = newRole;
+    notify('Rol actualizado a ' + newRole);
+    renderUsers();
+  } catch (e) {
+    notify('Error: ' + e.message);
+    renderUsers();
+  }
 }
 
 // ════════════════════════════════════════════
