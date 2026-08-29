@@ -244,7 +244,10 @@ let dmChannelCache: Record<string, string> = {};
 
 async function sendDiscordDM(discordId: string, message: string) {
   const botToken = getDiscordBotToken();
-  if (!botToken || !discordId) return;
+  if (!botToken || !discordId) {
+    console.log("[DM] Bot token or discordId missing:", { hasToken: !!botToken, discordId });
+    return;
+  }
 
   try {
     let channelId = dmChannelCache[discordId];
@@ -260,14 +263,19 @@ async function sendDiscordDM(discordId: string, message: string) {
         body: JSON.stringify({ recipient_id: discordId }),
       });
 
-      if (!dmRes.ok) return;
+      if (!dmRes.ok) {
+        const err = await dmRes.text();
+        console.log("[DM] Failed to create channel:", dmRes.status, err);
+        return;
+      }
       const dmData = await dmRes.json() as { id: string };
       channelId = dmData.id;
       dmChannelCache[discordId] = channelId;
+      console.log("[DM] Channel created for", discordId, ":", channelId);
     }
 
     // Send message
-    await fetch(`https://discord.com/api/channels/${channelId}/messages`, {
+    const sendRes = await fetch(`https://discord.com/api/channels/${channelId}/messages`, {
       method: "POST",
       headers: {
         "Authorization": `Bot ${botToken}`,
@@ -275,14 +283,22 @@ async function sendDiscordDM(discordId: string, message: string) {
       },
       body: JSON.stringify({ content: message }),
     });
-  } catch {
-    // Ignore DM errors
+
+    if (!sendRes.ok) {
+      const err = await sendRes.text();
+      console.log("[DM] Failed to send:", sendRes.status, err);
+    } else {
+      console.log("[DM] Sent to", discordId);
+    }
+  } catch (e) {
+    console.log("[DM] Error:", e);
   }
 }
 
 function notifyDM(type: string, msg: string, reportId: string, username: string) {
   const users = getUsers();
   const target = users.find(u => u.username === username || u.name === username);
+  console.log("[DM] notifyDM called:", { type, username, foundUser: !!target, discordId: target?.discordId });
   if (target && target.discordId) {
     const prefix = type === "new_report" ? "🆕" : type === "status_change" ? "🔄" : type === "new_comment" ? "💬" : type === "assigned" ? "📌" : "🔔";
     sendDiscordDM(target.discordId, `${prefix} **${msg}**\n<https://samp-tracker.vercel.app>`);
