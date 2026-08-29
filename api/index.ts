@@ -13,7 +13,7 @@ const STATE_KEY = "samp-tracker-state";
 
 // ─── INTERFACES ────────────────────────────────────────────────────
 
-interface User { id: number; name: string; username: string; password: string; role: string; color: string; bg: string; avatar: string; discordWebhook: string; createdAt: string; }
+interface User { id: number; name: string; username: string; password: string; role: string; color: string; bg: string; avatar: string; discordWebhook: string; discordId?: string; discordAvatar?: string; createdAt: string; }
 interface Comment { id: number; text: string; author: string; createdAt: string; }
 interface Attachment { id: number; url: string; name: string; added_by: string; created_at: string; }
 interface HistoryEntry { user: string; action: string; from: string; to: string; date: string; }
@@ -264,6 +264,161 @@ function hLogin(b: Record<string, unknown>) {
   return r({ user: publicUser(user), token: createSessionToken(user) });
 }
 
+// ─── DISCORD OAUTH ────────────────────────────────────────────────
+
+function getDiscordConfig() {
+  const clientId = process.env.DISCORD_CLIENT_ID || "1505357433722376313";
+  const clientSecret = process.env.DISCORD_CLIENT_SECRET || "uHScdbVaUUzwsVcwL7VnqdtLSqShaEvr";
+  const redirectUri = process.env.DISCORD_REDIRECT_URI || "https://samp-tracker.vercel.app/api/auth/discord/callback";
+  return { clientId, clientSecret, redirectUri };
+}
+
+function hDiscordAuth(req: Request) {
+  const { clientId, redirectUri } = getDiscordConfig();
+  if (!clientId || !redirectUri) {
+    return r({ error: "Discord OAuth no está configurado." }, 500);
+  }
+  const url = new URL(req.url);
+  const origin = url.origin;
+  const state = crypto.randomUUID();
+  const discordUrl = `https://discord.com/api/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify%20email&state=${state}`;
+  return new Response(null, {
+    status: 302,
+    headers: { Location: discordUrl },
+  });
+}
+
+async function hDiscordCallback(req: Request) {
+  const { clientId, clientSecret, redirectUri } = getDiscordConfig();
+  if (!clientId || !clientSecret || !redirectUri) {
+    return r({ error: "Discord OAuth no está configurado." }, 500);
+  }
+
+  const url = new URL(req.url);
+  const code = url.searchParams.get("code");
+  if (!code) {
+    return r({ error: "Código de autorización no proporcionado." }, 400);
+  }
+
+  try {
+    // Exchange code for access token
+    const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: redirectUri,
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      return r({ error: "Error al intercambiar código con Discord." }, 500);
+    }
+
+    const tokenData = await tokenRes.json() as { access_token: string };
+    const accessToken = tokenData.access_token;
+
+    // Fetch user info from Discord
+    const userRes = await fetch("https://discord.com/api/users/@me", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!userRes.ok) {
+      return r({ error: "Error al obtener datos del usuario de Discord." }, 500);
+    }
+
+    const discordUser = await userRes.json() as {
+      id: string;
+      username: string;
+      discriminator: string;
+      avatar: string | null;
+      email?: string;
+    };
+
+    const discordId = discordUser.id;
+    const discordName = discordUser.username;
+    const discordAvatar = discordUser.avatar
+      ? `https://cdn.discordapp.com/avatars/${discordId}/${discordUser.avatar}.png`
+      : "";
+
+    // Find or create user
+    const users = getUsers();
+    let user = users.find(u => u.discordId === discordId);
+
+    if (user) {
+      // Update existing Discord user's avatar/name
+      user.discordAvatar = discordAvatar;
+      if (discordName) user.name = discordName;
+    } else {
+      // Check if there's a user with the same Discord username
+      const existingByName = users.find(u => u.username.toLowerCase() === discordName.toLowerCase());
+      if (existingByName) {
+        // Link Discord to existing account
+        existingByName.discordId = discordId;
+        existingByName.discordAvatar = discordAvatar;
+        user = existingByName;
+      } else {
+        // Create new user
+        const rc = ROLE_COLORS.Tester;
+        const newUser: User = {
+          id: state.nextUserId++,
+          name: discordName,
+          username: discordName.toLowerCase().replace(/[^a-z0-9]/g, ""),
+          password: crypto.randomUUID(),
+          role: "Tester",
+          color: rc.color,
+          bg: rc.bg,
+          avatar: discordAvatar,
+          discordWebhook: "",
+          discordId,
+          discordAvatar,
+          createdAt: new Date().toISOString(),
+        };
+        users.push(newUser);
+        user = newUser;
+      }
+    }
+
+    saveState();
+
+    // Generate session token
+    const token = createSessionToken(user!);
+    const publicUserData = publicUser(user!);
+
+    // Redirect to frontend with token
+    const frontendUrl = url.origin;
+    const redirectUrl = `${frontendUrl}?token=${token}&user=${encodeURIComponent(JSON.stringify(publicUserData))}`;
+    return new Response(null, {
+      status: 302,
+      headers: { Location: redirectUrl },
+    });
+  } catch (e: unknown) {
+    return r({ error: e instanceof Error ? e.message : "Error en OAuth de Discord." }, 500);
+  }
+}
+
+// ─── LINK DISCORD TO EXISTING ACCOUNT ─────────────────────────────
+
+function hLinkDiscord(req: Request) {
+  const { clientId, redirectUri } = getDiscordConfig();
+  if (!clientId || !redirectUri) {
+    return r({ error: "Discord OAuth no está configurado." }, 500);
+  }
+  const user = requireUser(req);
+  if (!user) return unauthorized();
+
+  const url = new URL(req.url);
+  const state = `link_${user.id}_${crypto.randomUUID()}`;
+  const discordUrl = `https://discord.com/api/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify&state=${state}`;
+  return new Response(null, {
+    status: 302,
+    headers: { Location: discordUrl },
+  });
+}
+
 function hUpdateUser(id: number, b: Record<string, unknown>, sessionUserId?: number, canManageRole = false) {
   const users = getUsers();
   const idx = users.findIndex(u => u.id === id);
@@ -475,6 +630,16 @@ async function handleAll(req: Request): Promise<Response> {
     // Auth
     if (path[0] === "register" && method === "POST") return hRegister(body);
     if (path[0] === "login" && method === "POST") return hLogin(body);
+    // Discord OAuth
+    if (path[0] === "auth" && path[1] === "discord" && path.length === 2 && method === "GET") return hDiscordAuth(req);
+    if (path[0] === "auth" && path[1] === "discord" && path[2] === "callback" && path.length === 3 && method === "GET") return hDiscordCallback(req);
+    if (path[0] === "auth" && path[1] === "discord" && path[2] === "link" && path.length === 3 && method === "GET") return hLinkDiscord(req);
+    if (path[0] === "auth" && path[1] === "discord" && path[2] === "unlink" && path.length === 3 && method === "POST") {
+      if (!user) return unauthorized();
+      user.discordId = undefined;
+      user.discordAvatar = undefined;
+      return r(publicUser(user));
+    }
     // Users
     if (path[0] === "users" && path.length === 1 && method === "GET") {
       if (!user) return unauthorized();
