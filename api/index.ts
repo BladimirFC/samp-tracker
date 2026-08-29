@@ -233,9 +233,66 @@ function addHist(report: Report, user: string, action: string, from?: string, to
   if (!report.history) report.history = [];
   report.history.push({ user, action, from: from || "", to: to || "", date: new Date().toISOString() });
 }
+
+// ─── DISCORD DM NOTIFICATIONS ─────────────────────────────────────
+
+function getDiscordBotToken() {
+  return process.env.DISCORD_BOT_TOKEN || "";
+}
+
+let dmChannelCache: Record<string, string> = {};
+
+async function sendDiscordDM(discordId: string, message: string) {
+  const botToken = getDiscordBotToken();
+  if (!botToken || !discordId) return;
+
+  try {
+    let channelId = dmChannelCache[discordId];
+
+    if (!channelId) {
+      // Create DM channel
+      const dmRes = await fetch("https://discord.com/api/users/@me/channels", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bot ${botToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ recipient_id: discordId }),
+      });
+
+      if (!dmRes.ok) return;
+      const dmData = await dmRes.json() as { id: string };
+      channelId = dmData.id;
+      dmChannelCache[discordId] = channelId;
+    }
+
+    // Send message
+    await fetch(`https://discord.com/api/channels/${channelId}/messages`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bot ${botToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ content: message }),
+    });
+  } catch {
+    // Ignore DM errors
+  }
+}
+
+function notifyDM(type: string, msg: string, reportId: string, username: string) {
+  const users = getUsers();
+  const target = users.find(u => u.username === username || u.name === username);
+  if (target && target.discordId) {
+    const prefix = type === "new_report" ? "🆕" : type === "status_change" ? "🔄" : type === "new_comment" ? "💬" : type === "assigned" ? "📌" : "🔔";
+    sendDiscordDM(target.discordId, `${prefix} **${msg}**\n<https://samp-tracker.vercel.app>`);
+  }
+}
+
 function addNotif(type: string, msg: string, reportId: string, username: string) {
   const notifications = getNotifications();
   notifications.push({ id: state.nextNotifId++, type, message: msg, report_id: reportId, username, read: 0, created_at: new Date().toISOString() });
+  notifyDM(type, msg, reportId, username);
 }
 
 // ─── HANDLERS ─────────────────────────────────────────────────────
