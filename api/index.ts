@@ -702,20 +702,20 @@ async function handleAll(req: Request): Promise<Response> {
   if (probePath[0] === "discord-bot" && req.method === "POST") {
     const sig = req.headers.get("x-signature-ed25519") || "";
     const ts = req.headers.get("x-signature-timestamp") || "";
-    if (!sig || !ts) return r({ type: 4, data: { content: "No signature" } });
 
     try {
       const cloned = req.clone();
       const rawBody = await cloned.text();
       const publicKey = process.env.DISCORD_PUBLIC_KEY || "";
-      if (publicKey) {
+
+      if (publicKey && sig && ts) {
         try {
           const nacl = (await import("tweetnacl")).default;
           const msg = new TextEncoder().encode(ts + rawBody);
           const sigBytes = hexToBytes(sig);
           const keyBytes = hexToBytes(publicKey);
           if (!nacl.sign.detached.verify(msg, sigBytes, keyBytes)) {
-            return r({ error: "Invalid signature" }, 401);
+            return r({ error: "Invalid request signature" }, 401);
           }
         } catch {
           return r({ error: "Signature verification failed" }, 401);
