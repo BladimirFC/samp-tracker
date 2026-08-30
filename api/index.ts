@@ -699,12 +699,17 @@ async function handleAll(req: Request): Promise<Response> {
   const probePath = (probeUrl.searchParams.get("apipath") || "").split("/").filter(Boolean);
 
   if (probePath[0] === "discord-bot" && req.method === "POST") {
-    const sig = req.headers.get("x-signature-ed25519") || "";
-    const ts = req.headers.get("x-signature-timestamp") || "";
-
     try {
       const cloned = req.clone();
       const rawBody = await cloned.text();
+      const interaction = JSON.parse(rawBody);
+
+      if (interaction.type === 1) {
+        return r({ type: 1 });
+      }
+
+      const sig = req.headers.get("x-signature-ed25519") || "";
+      const ts = req.headers.get("x-signature-timestamp") || "";
       const publicKey = process.env.DISCORD_PUBLIC_KEY || "";
 
       if (publicKey && sig && ts) {
@@ -720,9 +725,6 @@ async function handleAll(req: Request): Promise<Response> {
           return r({ error: "Signature verification failed" }, 401);
         }
       }
-
-      const interaction = JSON.parse(rawBody);
-      if (interaction.type === 1) return r({ type: 1 });
 
       if (interaction.type === 2 && interaction.data?.name === "report") {
         return r({ type: 9, data: { custom_id: "report_modal", title: "Nuevo Reporte", components: [
