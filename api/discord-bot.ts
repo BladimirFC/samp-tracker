@@ -1,5 +1,4 @@
 export const runtime = "nodejs";
-import nacl from "tweetnacl";
 
 // ─── DISCORD CONFIG ───────────────────────────────────────────────
 
@@ -13,7 +12,7 @@ function getConfig() {
   };
 }
 
-// ─── SIGNATURE VERIFICATION (Ed25519) ─────────────────────────────
+// ─── SIGNATURE VERIFICATION (Ed25519 via WebCrypto) ───────────────
 
 function hexToUint8Array(hex: string): Uint8Array {
   const arr = new Uint8Array(hex.length / 2);
@@ -23,18 +22,35 @@ function hexToUint8Array(hex: string): Uint8Array {
   return arr;
 }
 
-function verifySignature(
+async function verifySignature(
   signature: string,
   timestamp: string,
   body: string,
   publicKey: string
-): boolean {
+): Promise<boolean> {
   try {
-    const message = new TextEncoder().encode(timestamp + body);
+    const encoder = new TextEncoder();
+    const message = encoder.encode(timestamp + body);
     const sig = hexToUint8Array(signature);
-    const key = hexToUint8Array(publicKey);
-    return nacl.sign.detached.verify(message, sig, key);
-  } catch {
+    const keyBytes = hexToUint8Array(publicKey);
+
+    // Import as Ed25519 public key
+    const key = await crypto.subtle.importKey(
+      "raw",
+      keyBytes,
+      { name: "Ed25519" } as any,
+      false,
+      ["verify"]
+    );
+
+    return await crypto.subtle.verify(
+      { name: "Ed25519" } as any,
+      key,
+      sig,
+      message
+    );
+  } catch (e) {
+    console.log("[BOT] Verify error:", e);
     return false;
   }
 }
@@ -86,7 +102,7 @@ export default async function handler(req: Request): Promise<Response> {
   const timestamp = req.headers.get("x-signature-timestamp") || "";
   const body = await req.text();
 
-  if (!verifySignature(signature, timestamp, body, config.publicKey)) {
+  if (!await verifySignature(signature, timestamp, body, config.publicKey)) {
     return new Response("Invalid request", { status: 401 });
   }
 
