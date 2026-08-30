@@ -703,12 +703,6 @@ async function handleAll(req: Request): Promise<Response> {
     try {
       const cloned = req.clone();
       const rawBody = await cloned.text();
-      const interaction = JSON.parse(rawBody);
-
-      if (interaction.type === 1) {
-        return r({ type: 1 });
-      }
-
       const sig = req.headers.get("x-signature-ed25519") || "";
       const ts = req.headers.get("x-signature-timestamp") || "";
       const publicKey = process.env.DISCORD_PUBLIC_KEY || "";
@@ -727,6 +721,9 @@ async function handleAll(req: Request): Promise<Response> {
           return r({ error: "Signature verification failed: " + (e?.message || e) }, 401);
         }
       }
+
+      const interaction = JSON.parse(rawBody);
+      if (interaction.type === 1) return r({ type: 1 });
 
       if (interaction.type === 2 && interaction.data?.name === "report") {
         return r({ type: 9, data: { custom_id: "report_modal", title: "Nuevo Reporte", components: [
