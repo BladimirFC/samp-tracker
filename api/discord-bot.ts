@@ -1,5 +1,5 @@
 export const runtime = "nodejs";
-import { createPublicKey, createVerify } from "node:crypto";
+import nacl from "tweetnacl";
 
 // ─── DISCORD CONFIG ───────────────────────────────────────────────
 
@@ -13,7 +13,15 @@ function getConfig() {
   };
 }
 
-// ─── SIGNATURE VERIFICATION ───────────────────────────────────────
+// ─── SIGNATURE VERIFICATION (Ed25519) ─────────────────────────────
+
+function hexToUint8Array(hex: string): Uint8Array {
+  const arr = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    arr[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+  }
+  return arr;
+}
 
 function verifySignature(
   signature: string,
@@ -22,12 +30,10 @@ function verifySignature(
   publicKey: string
 ): boolean {
   try {
-    const message = Buffer.from(timestamp + body);
-    const sig = Buffer.from(signature, "hex");
-    const key = `-----BEGIN PUBLIC KEY-----\n${publicKey}\n-----END PUBLIC KEY-----`;
-    const verifier = createVerify("sha256");
-    verifier.update(message);
-    return verifier.verify(key, sig);
+    const message = new TextEncoder().encode(timestamp + body);
+    const sig = hexToUint8Array(signature);
+    const key = hexToUint8Array(publicKey);
+    return nacl.sign.detached.verify(message, sig, key);
   } catch {
     return false;
   }
