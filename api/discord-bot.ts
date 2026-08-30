@@ -15,14 +15,6 @@ function getConfig() {
 
 // ─── SIGNATURE VERIFICATION ───────────────────────────────────────
 
-function hexToUint8Array(hex: string): Uint8Array {
-  const arr = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    arr[i / 2] = parseInt(hex.substring(i, i + 2), 16);
-  }
-  return arr;
-}
-
 function verifySignature(
   signature: string,
   timestamp: string,

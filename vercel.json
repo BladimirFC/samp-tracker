@@ -8,5 +8,10 @@
     { "src": "/api/discord-bot", "dest": "/api/discord-bot.ts" },
     { "src": "/api/(.*)", "dest": "/api?apipath=$1" },
     { "src": "/(.*)", "dest": "/index.html" }
-  ]
+  ],
+  "functions": {
+    "api/discord-bot.ts": {
+      "maxDuration": 10
+    }
+  }
 }
