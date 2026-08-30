@@ -687,11 +687,24 @@ function hMetrics() {
 // ─── MAIN ROUTER ──────────────────────────────────────────────────
 
 async function handleAll(req: Request): Promise<Response> {
-  await loadState();
-
+  // Quick check: Discord bot endpoint (before loadState to avoid Redis delays)
   const url = new URL(req.url);
   const apipath = url.searchParams.get("apipath") || "";
   const path = apipath.split("/").filter(Boolean);
+
+  if (path[0] === "discord-bot" && req.method === "POST") {
+    try {
+      const rawBody = await req.text();
+      const interaction = JSON.parse(rawBody);
+      if (interaction.type === 1) return r({ type: 1 });
+      return r({ type: 4, data: { content: "ok" } });
+    } catch {
+      return r({ type: 4, data: { content: "error" } });
+    }
+  }
+
+  await loadState();
+
   const method = req.method;
   let body: Record<string, unknown> = {};
   if (method === "POST" || method === "PUT" || method === "PATCH") {
