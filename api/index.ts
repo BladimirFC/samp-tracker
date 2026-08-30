@@ -11,14 +11,6 @@ try {
 
 const STATE_KEY = "samp-tracker-state";
 
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
-  }
-  return bytes;
-}
-
 // ─── INTERFACES ────────────────────────────────────────────────────
 
 interface User { id: number; name: string; username: string; password: string; role: string; color: string; bg: string; avatar: string; discordWebhook: string; discordId?: string; discordAvatar?: string; createdAt: string; }
@@ -702,107 +694,6 @@ async function handleAll(req: Request): Promise<Response> {
   const path = apipath.split("/").filter(Boolean);
   const method = req.method;
   let body: Record<string, unknown> = {};
-
-  // ─── DISCORD BOT INTERACTIONS ENDPOINT ──────────────────────
-  if (path[0] === "discord-bot") {
-    try {
-      const rawBody = await req.text();
-      const sig = req.headers.get("x-signature-ed25519") || "";
-      const ts = req.headers.get("x-signature-timestamp") || "";
-      const publicKey = process.env.DISCORD_PUBLIC_KEY || "";
-
-      // Verify Ed25519 signature (skip if no publicKey configured)
-      if (publicKey && sig && ts) {
-        try {
-          const nacl = (await import("tweetnacl")).default;
-          const msg = new TextEncoder().encode(ts + rawBody);
-          const sigBytes = hexToBytes(sig);
-          const keyBytes = hexToBytes(publicKey);
-          if (!nacl.sign.detached.verify(msg, sigBytes, keyBytes)) {
-            return r({ error: "Invalid signature" }, 401);
-          }
-        } catch {
-          return r({ error: "Signature verification failed" }, 401);
-        }
-      }
-
-      const interaction = JSON.parse(rawBody);
-
-      // PING (type 1) — respond with PONG
-      if (interaction.type === 1) {
-        return r({ type: 1 });
-      }
-
-      // SLASH COMMAND (type 2)
-      if (interaction.type === 2 && interaction.data?.name === "report") {
-        return r({
-          type: 9, // MODAL
-          data: {
-            custom_id: "report_modal",
-            title: "Nuevo Reporte",
-            components: [
-              { type: 1, components: [
-                { type: 4, custom_id: "title", label: "Título del reporte", style: 1, placeholder: "Ej: Error al abrir el menú de trabajo", required: true, max_length: 100 },
-              ]},
-              { type: 1, components: [
-                { type: 4, custom_id: "type", label: "Tipo (Bug, Exploit, Sugerencia, Optimización, Mejora)", style: 1, placeholder: "Bug", required: true, value: "Bug", max_length: 20 },
-              ]},
-              { type: 1, components: [
-                { type: 4, custom_id: "priority", label: "Prioridad (Crítica, Alta, Media, Baja)", style: 1, placeholder: "Media", required: true, value: "Media", max_length: 10 },
-              ]},
-              { type: 1, components: [
-                { type: 4, custom_id: "description", label: "Descripción del problema", style: 2, placeholder: "Describe el bug con detalle...", required: true, max_length: 1000 },
-              ]},
-            ],
-          },
-        });
-      }
-
-      // MODAL SUBMIT (type 5)
-      if (interaction.type === 5 && interaction.data?.custom_id === "report_modal") {
-        const getVal = (id: string) => {
-          for (const row of interaction.data.components) {
-            for (const comp of row.components) {
-              if (comp.custom_id === id) return comp.value || "";
-            }
-          }
-          return "";
-        };
-        const title = getVal("title");
-        const type = getVal("type");
-        const priority = getVal("priority");
-        const description = getVal("description");
-        const author = interaction.member?.user?.username || interaction.user?.username || "Discord";
-
-        const reportId = `LR-${String(state.reportCounter++).padStart(3, "0")}`;
-        const now = new Date().toISOString();
-        const newReport: Report = {
-          id: reportId, title, type, priority, status: "Abierto", description,
-          evidence: "", author, assignee: null, followers: [], tags: [],
-          comments: [], attachments: [],
-          history: [{ user: "Sistema", action: "Creado", from: "", to: `${title} (${type})`, date: now }],
-          createdAt: now, updatedAt: now,
-        };
-        getReports().push(newReport);
-        addNotif("new_report", `${author} creó el reporte ${reportId}: ${title}`, reportId, author);
-        await saveState();
-
-        return r({
-          type: 4,
-          data: {
-            content: `✅ **Reporte creado**\n\n**${reportId}** — ${title}\nTipo: ${type} | Prioridad: ${priority}\n\n🔗 [Ver en el tracker](https://samp-tracker.vercel.app)`,
-          },
-        });
-      }
-
-      // Unknown interaction
-      return r({ type: 4, data: { content: "Comando no reconocido." } });
-    } catch (e) {
-      return r({ error: e instanceof Error ? e.message : "Bot error" }, 500);
-    }
-  }
-  // ─── END DISCORD BOT ────────────────────────────────────────────
-
   if (method === "POST" || method === "PUT" || method === "PATCH") {
     try { body = await req.json(); } catch { /* ignore */ }
   }
