@@ -1,7 +1,6 @@
 export const runtime = "nodejs";
 import { Redis } from "@upstash/redis";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import nacl from "tweetnacl";
 
 let redis: Redis | null = null;
 try {
@@ -715,6 +714,7 @@ async function handleAll(req: Request): Promise<Response> {
       // Verify Ed25519 signature (skip if no publicKey configured)
       if (publicKey && sig && ts) {
         try {
+          const nacl = (await import("tweetnacl")).default;
           const msg = new TextEncoder().encode(ts + rawBody);
           const sigBytes = hexToBytes(sig);
           const keyBytes = hexToBytes(publicKey);
