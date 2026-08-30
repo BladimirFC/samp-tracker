@@ -695,6 +695,64 @@ function hMetrics() {
 // ─── MAIN ROUTER ──────────────────────────────────────────────────
 
 async function handleAll(req: Request): Promise<Response> {
+  // ─── DISCORD BOT: intercept BEFORE loadState to avoid Redis hang ──
+  if (req.method === "POST") {
+    const probeUrl = new URL(req.url);
+    const probePath = probeUrl.searchParams.get("apipath") || "";
+    if (probePath === "discord-bot") {
+      try {
+        const rawBody = await req.text();
+        const sig = req.headers.get("x-signature-ed25519") || "";
+        const ts = req.headers.get("x-signature-timestamp") || "";
+        const publicKey = process.env.DISCORD_PUBLIC_KEY || "";
+
+        if (publicKey && sig && ts) {
+          try {
+            const nacl = (await import("tweetnacl")).default;
+            const msg = new TextEncoder().encode(ts + rawBody);
+            const sigBytes = hexToBytes(sig);
+            const keyBytes = hexToBytes(publicKey);
+            if (!nacl.sign.detached.verify(msg, sigBytes, keyBytes)) {
+              return r({ error: "Invalid signature" }, 401);
+            }
+          } catch {
+            return r({ error: "Signature verification failed" }, 401);
+          }
+        }
+
+        const interaction = JSON.parse(rawBody);
+        if (interaction.type === 1) return r({ type: 1 });
+
+        if (interaction.type === 2 && interaction.data?.name === "report") {
+          return r({ type: 9, data: { custom_id: "report_modal", title: "Nuevo Reporte", components: [
+            { type: 1, components: [{ type: 4, custom_id: "title", label: "Título del reporte", style: 1, required: true, max_length: 100 }] },
+            { type: 1, components: [{ type: 4, custom_id: "type", label: "Tipo (Bug, Exploit, Sugerencia, Optimización, Mejora)", style: 1, value: "Bug", required: true, max_length: 20 }] },
+            { type: 1, components: [{ type: 4, custom_id: "priority", label: "Prioridad (Crítica, Alta, Media, Baja)", style: 1, value: "Media", required: true, max_length: 10 }] },
+            { type: 1, components: [{ type: 4, custom_id: "description", label: "Descripción del problema", style: 2, required: true, max_length: 1000 }] },
+          ] } });
+        }
+
+        if (interaction.type === 5 && interaction.data?.custom_id === "report_modal") {
+          await loadState();
+          const gv = (id: string) => { for (const row of interaction.data.components) for (const c of row.components) if (c.custom_id === id) return c.value || ""; return ""; };
+          const title = gv("title"), type = gv("type"), priority = gv("priority"), description = gv("description");
+          const author = interaction.member?.user?.username || interaction.user?.username || "Discord";
+          const rid = `LR-${String(state.reportCounter++).padStart(3, "0")}`;
+          const now = new Date().toISOString();
+          getReports().push({ id: rid, title, type, priority, status: "Abierto", description, evidence: "", author, assignee: null, followers: [], tags: [], comments: [], attachments: [], history: [{ user: "Sistema", action: "Creado", from: "", to: `${title} (${type})`, date: now }], createdAt: now, updatedAt: now });
+          addNotif("new_report", `${author} creó ${rid}: ${title}`, rid, author);
+          await saveState();
+          return r({ type: 4, data: { content: `✅ **Reporte creado**\n\n**${rid}** — ${title}\nTipo: ${type} | Prioridad: ${priority}\n\n🔗 [Ver en el tracker](https://samp-tracker.vercel.app)` } });
+        }
+
+        return r({ type: 4, data: { content: "Comando no reconocido." } });
+      } catch {
+        return r({ type: 4, data: { content: "Error del bot" } });
+      }
+    }
+  }
+  // ─── END DISCORD BOT ────────────────────────────────────────────
+
   await loadState();
 
   const url = new URL(req.url);
@@ -702,56 +760,6 @@ async function handleAll(req: Request): Promise<Response> {
   const path = apipath.split("/").filter(Boolean);
   const method = req.method;
   let body: Record<string, unknown> = {};
-
-  // ─── DISCORD BOT: must read body as text BEFORE json() ──────
-  if (path[0] === "discord-bot" && method === "POST") {
-    try {
-      const rawBody = await req.text();
-      const sig = req.headers.get("x-signature-ed25519") || "";
-      const ts = req.headers.get("x-signature-timestamp") || "";
-      const publicKey = process.env.DISCORD_PUBLIC_KEY || "";
-
-      if (publicKey && sig && ts) {
-        try {
-          const nacl = (await import("tweetnacl")).default;
-          const msg = new TextEncoder().encode(ts + rawBody);
-          const sigBytes = hexToBytes(sig);
-          const keyBytes = hexToBytes(publicKey);
-          if (!nacl.sign.detached.verify(msg, sigBytes, keyBytes)) {
-            return r({ error: "Invalid signature" }, 401);
-          }
-        } catch {
-          return r({ error: "Signature verification failed" }, 401);
-        }
-      }
-
-      const interaction = JSON.parse(rawBody);
-      if (interaction.type === 1) return r({ type: 1 });
-      if (interaction.type === 2 && interaction.data?.name === "report") {
-        return r({ type: 9, data: { custom_id: "report_modal", title: "Nuevo Reporte", components: [
-          { type: 1, components: [{ type: 4, custom_id: "title", label: "Título del reporte", style: 1, required: true, max_length: 100 }] },
-          { type: 1, components: [{ type: 4, custom_id: "type", label: "Tipo (Bug, Exploit, Sugerencia, Optimización, Mejora)", style: 1, value: "Bug", required: true, max_length: 20 }] },
-          { type: 1, components: [{ type: 4, custom_id: "priority", label: "Prioridad (Crítica, Alta, Media, Baja)", style: 1, value: "Media", required: true, max_length: 10 }] },
-          { type: 1, components: [{ type: 4, custom_id: "description", label: "Descripción del problema", style: 2, required: true, max_length: 1000 }] },
-        ] } });
-      }
-      if (interaction.type === 5 && interaction.data?.custom_id === "report_modal") {
-        const gv = (id: string) => { for (const row of interaction.data.components) for (const c of row.components) if (c.custom_id === id) return c.value || ""; return ""; };
-        const title = gv("title"), type = gv("type"), priority = gv("priority"), description = gv("description");
-        const author = interaction.member?.user?.username || interaction.user?.username || "Discord";
-        const rid = `LR-${String(state.reportCounter++).padStart(3, "0")}`;
-        const now = new Date().toISOString();
-        getReports().push({ id: rid, title, type, priority, status: "Abierto", description, evidence: "", author, assignee: null, followers: [], tags: [], comments: [], attachments: [], history: [{ user: "Sistema", action: "Creado", from: "", to: `${title} (${type})`, date: now }], createdAt: now, updatedAt: now });
-        addNotif("new_report", `${author} creó ${rid}: ${title}`, rid, author);
-        await saveState();
-        return r({ type: 4, data: { content: `✅ **Reporte creado**\n\n**${rid}** — ${title}\nTipo: ${type} | Prioridad: ${priority}\n\n🔗 [Ver en el tracker](https://samp-tracker.vercel.app)` } });
-      }
-      return r({ type: 4, data: { content: "Comando no reconocido." } });
-    } catch (e) {
-      return r({ type: 4, data: { content: "Error del bot" } });
-    }
-  }
-
   if (method === "POST" || method === "PUT" || method === "PATCH") {
     try { body = await req.json(); } catch { /* ignore */ }
   }
