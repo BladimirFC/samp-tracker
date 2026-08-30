@@ -1,4 +1,3 @@
-export const runtime = "nodejs";
 import { Redis } from "@upstash/redis";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
