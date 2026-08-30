@@ -1,5 +1,6 @@
 import { Redis } from "@upstash/redis";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { webcrypto } from "node:crypto";
 
 let redis: Redis | null = null;
 try {
@@ -714,15 +715,16 @@ async function handleAll(req: Request): Promise<Response> {
 
       if (publicKey && sig && ts) {
         try {
-          const nacl = (await import("tweetnacl")).default;
-          const msg = new TextEncoder().encode(ts + rawBody);
-          const sigBytes = hexToBytes(sig);
           const keyBytes = hexToBytes(publicKey);
-          if (!nacl.sign.detached.verify(msg, sigBytes, keyBytes)) {
+          const sigBytes = hexToBytes(sig);
+          const msgBytes = new TextEncoder().encode(ts + rawBody);
+          const key = await webcrypto.subtle.importKey("raw", keyBytes, { name: "Ed25519" } as any, false, ["verify"]);
+          const valid = await webcrypto.subtle.verify("Ed25519" as any, key, sigBytes, msgBytes);
+          if (!valid) {
             return r({ error: "Invalid request signature" }, 401);
           }
-        } catch {
-          return r({ error: "Signature verification failed" }, 401);
+        } catch (e: any) {
+          return r({ error: "Signature verification failed: " + (e?.message || e) }, 401);
         }
       }
 
