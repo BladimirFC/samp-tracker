@@ -685,11 +685,24 @@ function hMetrics() {
   for (let i = 29; i >= 0; i--) { const d = new Date(now); d.setDate(d.getDate() - i); const ds = d.toISOString().slice(0, 10); days.push({ date: ds, total: reports.filter(r => r.createdAt.slice(0, 10) === ds).length }); }
   const wa = new Date(now); wa.setDate(wa.getDate() - 7);
   const solved7 = reports.filter(r => canonicalStatus(r.status) === "Solucionado" && r.updatedAt >= wa.toISOString()).length;
+  const created7 = reports.filter(r => new Date(r.createdAt).getTime() >= wa.getTime()).length;
+  const resolutionDays: number[] = [];
+  reports.forEach(rep => {
+    const status = canonicalStatus(rep.status);
+    if (status !== "Solucionado" && status !== "Cerrado") return;
+    const resolvedEntry = (rep.history || []).find(h => h.to === "Solucionado" || h.to === "Cerrado");
+    const resolvedAt = resolvedEntry?.date || rep.updatedAt;
+    const start = new Date(rep.createdAt).getTime();
+    const end = new Date(resolvedAt).getTime();
+    if (Number.isFinite(start) && Number.isFinite(end) && end >= start) resolutionDays.push((end - start) / (1000 * 60 * 60 * 24));
+  });
+  const resolvedCount = resolutionDays.length;
+  const avgResolutionDays = resolvedCount ? Number((resolutionDays.reduce((s, d) => s + d, 0) / resolvedCount).toFixed(1)) : null;
   const byStatus = STATUSES.map(s => ({ status: s, count: reports.filter(r => canonicalStatus(r.status) === s).length }));
   const byPriority = PRIORITIES.map(p => ({ priority: p, count: reports.filter(r => canonicalPriority(r.priority) === p).length }));
   const dm: Record<string, { assignee: string; open: number; closed: number; total: number }> = {};
   reports.forEach(r => { if (!r.assignee) return; if (!dm[r.assignee]) dm[r.assignee] = { assignee: r.assignee, open: 0, closed: 0, total: 0 }; dm[r.assignee].total++; if (canonicalStatus(r.status) === "Solucionado" || canonicalStatus(r.status) === "Cerrado") dm[r.assignee].closed++; else dm[r.assignee].open++; });
-  return r({ solved7, avgResolutionDays: "—", days, byStatus, byPriority, byDev: Object.values(dm).sort((a, b) => b.total - a.total) });
+  return r({ solved7, created7, avgResolutionDays, resolvedCount, days, byStatus, byPriority, byDev: Object.values(dm).sort((a, b) => b.total - a.total) });
 }
 
 // ─── MAIN ROUTER ──────────────────────────────────────────────────

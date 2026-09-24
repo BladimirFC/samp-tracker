@@ -760,6 +760,15 @@
 
   @media (max-width: 1024px) { .dashboard-grid { grid-template-columns: 1fr; } }
 
+  .dashboard-grid-trio {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 20px;
+    margin-top: 20px;
+  }
+
+  @media (max-width: 1024px) { .dashboard-grid-trio { grid-template-columns: 1fr; } }
+
   .card {
     background: var(--bg-1);
     border: 1px solid var(--border);
@@ -1781,6 +1790,22 @@
           </div>
         </div>
       </div>
+      <div class="dashboard-grid-trio">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Por estado</span></div>
+          <div class="card-body" id="status-breakdown"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Creados — últimos 7 días</span></div>
+          <div class="card-body">
+            <div class="bar-chart" id="weekly-bar-chart"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Carga por developer</span></div>
+          <div class="card-body" id="dashboard-dev-table"></div>
+        </div>
+      </div>
     </div>
 
     <!-- REPORTS -->
@@ -2382,8 +2407,10 @@ function toggleMobileMenu() {
 
 async function renderDashboard() {
   const stats = await api('/stats');
+  const metrics = await api('/metrics');
   const allReports = await api('/reports');
   reportsCache = allReports;
+  const avgDays = metrics.avgResolutionDays;
 
   const statsConfig = [
     { icon: '📋', label: 'Total reportes', value: stats.total, color: 'var(--accent)' },
@@ -2392,6 +2419,8 @@ async function renderDashboard() {
     { icon: '🧪', label: 'En pruebas', value: stats.testing, color: 'var(--yellow)' },
     { icon: '✅', label: 'Solucionados', value: stats.solved, color: 'var(--green)' },
     { icon: '🔥', label: 'Criticos', value: stats.critical, color: 'var(--red)' },
+    { icon: '⏱️', label: 'Promedio resolución', value: avgDays != null ? avgDays + 'd' : '—', color: 'var(--cyan)' },
+    { icon: '📅', label: 'Nuevos (7 días)', value: metrics.created7 ?? 0, color: 'var(--blue)' },
   ];
 
   document.getElementById('stats-grid').innerHTML = statsConfig.map(s => '' +
@@ -2440,6 +2469,40 @@ async function renderDashboard() {
       '<div class="progress-bar"><div class="progress-fill" style="width:' + pct + '%;background:' + tColors[t] + '"></div></div>' +
     '</div>';
   }).join('');
+
+  // ─── Por estado ───
+  const statusColors = { 'Pendiente': '#94a3b8', 'En revisión': '#60a5fa', 'En desarrollo': '#a78bfa', 'Esperando pruebas': '#facc15', 'Solucionado': '#34d399', 'Cerrado': '#64748b' };
+  const totalS = (metrics.byStatus || []).reduce((s, x) => s + x.count, 0) || 1;
+  document.getElementById('status-breakdown').innerHTML = '<div class="dist-list">' +
+    (metrics.byStatus || []).map(x => {
+      const pct = Math.round((x.count / totalS) * 100);
+      const c = statusColors[x.status] || 'var(--text-2)';
+      return '<div class="dist-item">' +
+        '<div class="dist-header"><span style="color:var(--text-1)">' + escapeHTML(x.status) + '</span><span style="color:var(--text-2)">' + x.count + '</span></div>' +
+        '<div class="dist-bar-bg"><div class="dist-bar-fill" style="width:' + pct + '%;background:' + c + '"></div></div>' +
+      '</div>';
+    }).join('') + '</div>';
+
+  // ─── Creados — últimos 7 días ───
+  const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+  const last7 = (metrics.days || []).slice(-7);
+  const maxW = Math.max(1, ...last7.map(d => d.total));
+  document.getElementById('weekly-bar-chart').innerHTML = last7.map(d => {
+    const pct = Math.round((d.total / maxW) * 100);
+    const label = dayNames[new Date(d.date + 'T12:00:00').getDay()] || '';
+    return '<div class="bar-wrap" title="' + d.date + ': ' + d.total + ' reporte(s)">' +
+      '<div class="bar-col" style="height:' + Math.max(pct, 2) + '%;background:var(--accent)"></div>' +
+      '<div class="bar-label">' + label + '</div>' +
+    '</div>';
+  }).join('');
+
+  // ─── Carga por developer ───
+  document.getElementById('dashboard-dev-table').innerHTML = (metrics.byDev || []).length === 0
+    ? '<p style="font-size:13px;color:var(--text-3)">Sin reportes asignados.</p>'
+    : '<table class="dev-table"><thead><tr><th>Developer</th><th>Abiertos</th><th>Resueltos</th><th>Total</th></tr></thead><tbody>' +
+      (metrics.byDev || []).slice(0, 5).map(d => '<tr><td>' + escapeHTML(d.assignee) + '</td><td style="color:var(--orange)">' + d.open + '</td><td style="color:var(--green)">' + d.closed + '</td><td>' + d.total + '</td></tr>').join('') +
+      '</tbody></table>';
+
 }
 
 // ════════════════════════════════════════════
@@ -3275,6 +3338,7 @@ async function renderMetrics() {
 
   document.getElementById('metrics-summary').innerHTML = `
     <div class="metric-kpi"><div class="metric-kpi-label">Resueltos (7 días)</div><div class="metric-kpi-value" style="color:var(--green)">${m.solved7}</div><div class="metric-kpi-sub">bugs solucionados</div></div>
+    <div class="metric-kpi"><div class="metric-kpi-label">Nuevos (7 días)</div><div class="metric-kpi-value" style="color:var(--blue)">${m.created7 ?? 0}</div><div class="metric-kpi-sub">reportes creados</div></div>
     <div class="metric-kpi"><div class="metric-kpi-label">Tiempo promedio</div><div class="metric-kpi-value">${m.avgResolutionDays ?? '—'}</div><div class="metric-kpi-sub">días hasta solución</div></div>
     <div class="metric-kpi"><div class="metric-kpi-label">Total reportes</div><div class="metric-kpi-value">${m.days.reduce((s,d) => s+d.total,0)}</div><div class="metric-kpi-sub">últimos 30 días</div></div>
     <div class="metric-kpi"><div class="metric-kpi-label">Developers activos</div><div class="metric-kpi-value">${(m.byDev||[]).length}</div><div class="metric-kpi-sub">con reportes asignados</div></div>
