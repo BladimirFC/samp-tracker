@@ -10,6 +10,7 @@ export interface User {
   bg: string;
   avatar?: string;
   discordWebhook?: string;
+  createdAt?: string;
 }
 
 export interface Comment { id: number; text: string; author: string; createdAt: string }
@@ -37,6 +38,28 @@ export interface Report {
 
 export interface Patch { id: string; version: string; date: string; notes: string; bugIds: string[]; createdAt: string }
 export interface Tag { id: number; name: string; color: string }
-export interface Stats { total: number; pending: number; inRevision: number; inDev: number; testing: number; solved: number; critical: number }
+export interface NotificationItem { id: number; type: string; message: string; report_id: string; username: string; read: number; created_at: string }
+export interface Stats {
+  total: number;
+  pending: number;
+  inRevision: number;
+  inDev: number;
+  testing: number;
+  solved: number;
+  critical: number;
+  priorities: Array<{ priority: string; count: number }>;
+  types: Array<{ type: string; count: number }>;
+}
+export interface Metrics {
+  solved7: number;
+  created7: number;
+  avgResolutionDays: number | null;
+  resolvedCount: number;
+  days: Array<{ date: string; total: number }>;
+  byStatus: Array<{ status: ReportStatus; count: number }>;
+  byPriority: Array<{ priority: string; count: number }>;
+  byDev: Array<{ assignee: string; open: number; closed: number; total: number }>;
+}
 export interface Session { user: User; token: string }
 export type Page = "dashboard" | "reports" | "kanban" | "patches" | "users" | "settings";
+export interface ReportFilters { query?: string; status?: string; priority?: string; type?: string; author?: string; assignee?: string }

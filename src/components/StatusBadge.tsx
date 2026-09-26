@@ -14,6 +14,9 @@ const palettes: Record<string, string> = {
   "Sugerencia": "badge-blue",
   "Optimización": "badge-cyan",
   "Mejora": "badge-purple",
+  "CEO": "badge-yellow",
+  "Developer": "badge-purple",
+  "Tester": "badge-blue",
 };
 
 export function StatusBadge({ value }: { value: string }) {

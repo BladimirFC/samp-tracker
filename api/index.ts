@@ -226,6 +226,13 @@ function isSafeHttpUrl(value: unknown) {
   }
 }
 
+function isSafeAttachmentUrl(value: unknown) {
+  if (isSafeHttpUrl(value)) return true;
+  return typeof value === "string" &&
+    value.length <= 500_000 &&
+    /^data:image\/(?:png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(value);
+}
+
 function isSafeAvatar(value: unknown) {
   if (value === "") return true;
   if (isSafeHttpUrl(value)) return true;
@@ -602,6 +609,9 @@ function hAssign(id: string, b: Record<string, unknown>) {
   const reports = getReports();
   const rep = reports.find(r => r.id === id); if (!rep) return nf();
   const { username } = b as { username: string };
+  if (!username || !getUsers().some(user => user.name === username || user.username === username)) {
+    return r({ error: "El responsable seleccionado no existe." }, 400);
+  }
   const old = rep.assignee; rep.assignee = username; rep.updatedAt = new Date().toISOString();
   if (username) addHist(rep, username, "se asignó el reporte", old || "nadie", username);
   addNotif("assigned", `Te asignaron el reporte ${id}`, id, username);
@@ -638,7 +648,7 @@ function hAddAttachment(id: string, b: Record<string, unknown>) {
   const reports = getReports();
   const rep = reports.find(r => r.id === id); if (!rep) return nf();
   const { url, name, added_by } = b as { url: string; name: string; added_by: string };
-  if (!isSafeHttpUrl(url)) return r({ error: "La URL debe ser http o https válida." }, 400);
+  if (!isSafeAttachmentUrl(url)) return r({ error: "Adjunto no válido o demasiado grande (máximo 500 KB)." }, 400);
   if (!rep.attachments) rep.attachments = [];
   const a: Attachment = { id: state.nextAttachmentId++, url, name: name || "Adjunto", added_by: added_by || "Desconocido", created_at: new Date().toISOString() };
   rep.attachments.push(a); if (added_by) addHist(rep, added_by, "agregó un adjunto");
@@ -865,8 +875,9 @@ async function handleAll(req: Request): Promise<Response> {
       return hUpdateStatus(path[1], { ...body, username: user.name });
     }
     if (path[0] === "reports" && path.length === 3 && path[2] === "assign" && method === "POST") {
-      if (!user || !hasRole(user, "Developer")) return user ? forbidden() : unauthorized();
-      return hAssign(path[1], { username: user.name });
+      if (!user || !hasRole(user, "CEO", "Developer")) return user ? forbidden() : unauthorized();
+      const requested = hasRole(user, "CEO") && typeof body.username === "string" ? body.username : user.name;
+      return hAssign(path[1], { username: requested });
     }
     if (path[0] === "reports" && path.length === 3 && path[2] === "assign" && method === "DELETE") {
       if (!user || !hasRole(user, "CEO")) return user ? forbidden() : unauthorized();
@@ -881,7 +892,7 @@ async function handleAll(req: Request): Promise<Response> {
       return hFollow(path[1], { username: user.name });
     }
     if (path[0] === "reports" && path.length === 3 && path[2] === "attachments" && method === "POST") {
-      if (!user || !hasRole(user, "CEO", "Developer")) return user ? forbidden() : unauthorized();
+      if (!user) return unauthorized();
       return hAddAttachment(path[1], { ...body, added_by: user.name });
     }
     if (path[0] === "reports" && path.length === 4 && path[2] === "attachments" && method === "DELETE") {

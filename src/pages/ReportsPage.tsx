@@ -1,66 +1,79 @@
-import { MessageSquare, Plus, Search, Trash2, UserPlus } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
+import { Bell, Bookmark, ExternalLink, ImagePlus, MessageSquare, Plus, Search, Trash2, UserPlus, X } from "lucide-react";
+import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
 import { EmptyState } from "../components/EmptyState";
 import { Modal } from "../components/Modal";
 import { StatusBadge } from "../components/StatusBadge";
 import { useData } from "../hooks/useData";
 import { api } from "../lib/api";
-import type { Report, ReportStatus, User } from "../types";
-import { PageError, PageLoading } from "./DashboardPage";
+import type { Report, ReportFilters, ReportStatus, User } from "../types";
+import { PageError, PageLoading, relativeTime } from "./DashboardPage";
 
 const statuses: ReportStatus[] = ["Pendiente", "En revisión", "En desarrollo", "Esperando pruebas", "Solucionado", "Cerrado"];
 const priorities = ["Crítica", "Alta", "Media", "Baja"];
 const types = ["Bug", "Exploit", "Sugerencia", "Optimización", "Mejora"];
+const presetKey = "legacy-report-filter-presets";
+type Preset = { name: string; filters: ReportFilters };
 
-interface ReportsPageProps { token: string; user: User; initialReport: Report | null; onInitialReportHandled: () => void }
+interface ReportsPageProps { token: string; user: User; initialReport: Report | null; initialFilters: ReportFilters; onInitialReportHandled: () => void }
 
-export function ReportsPage({ token, user, initialReport, onInitialReportHandled }: ReportsPageProps) {
-  const loader = useMemo(() => () => api<Report[]>("/reports", token), [token]);
-  const { data: reports, loading, error, reload } = useData(loader, [loader]);
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("");
+export function ReportsPage({ token, user, initialReport, initialFilters, onInitialReportHandled }: ReportsPageProps) {
+  const loader = useMemo(() => async () => { const [reports, users] = await Promise.all([api<Report[]>("/reports", token), api<User[]>("/users", token)]); return { reports, users }; }, [token]);
+  const { data, loading, error, reload } = useData(loader, [loader]);
+  const [filters, setFilters] = useState<ReportFilters>(initialFilters);
+  const [sort, setSort] = useState("updated");
   const [selected, setSelected] = useState<Report | null>(initialReport);
   const [creating, setCreating] = useState(false);
+  const [presets, setPresets] = useState<Preset[]>(() => { try { return JSON.parse(localStorage.getItem(presetKey) || "[]") as Preset[]; } catch { return []; } });
+  useEffect(() => { setFilters(initialFilters); }, [initialFilters]);
+  useEffect(() => { if (initialReport) setSelected(initialReport); }, [initialReport]);
 
-  const filtered = useMemo(() => (reports || []).filter((report) => {
-    const matchesText = `${report.id} ${report.title} ${report.author}`.toLowerCase().includes(query.toLowerCase());
-    return matchesText && (!status || report.status === status);
-  }), [reports, query, status]);
-
+  const filtered = useMemo(() => {
+    const query = (filters.query || "").toLowerCase();
+    const rows = (data?.reports || []).filter((report) => {
+      const text = `${report.id} ${report.title} ${report.author} ${report.assignee || ""}`.toLowerCase();
+      return (!query || text.includes(query)) && (!filters.status || report.status === filters.status) && (!filters.priority || report.priority === filters.priority) && (!filters.type || report.type === filters.type) && (!filters.author || report.author === filters.author) && (!filters.assignee || report.assignee === filters.assignee);
+    });
+    return [...rows].sort((a, b) => sort === "oldest" ? +new Date(a.createdAt) - +new Date(b.createdAt) : sort === "priority" ? priorities.indexOf(a.priority) - priorities.indexOf(b.priority) : sort === "title" ? a.title.localeCompare(b.title) : +new Date(b.updatedAt) - +new Date(a.updatedAt));
+  }, [data?.reports, filters, sort]);
+  const activeCount = Object.values(filters).filter(Boolean).length;
+  function setFilter(key: keyof ReportFilters, value: string) { setFilters((current) => ({ ...current, [key]: value })); }
+  function savePreset() { const name = window.prompt("Nombre para este filtro"); if (!name?.trim()) return; const next = [...presets.filter((item) => item.name !== name.trim()), { name: name.trim(), filters }]; setPresets(next); localStorage.setItem(presetKey, JSON.stringify(next)); }
   function closeDetail() { setSelected(null); onInitialReportHandled(); }
   if (loading) return <PageLoading />;
-  if (error || !reports) return <PageError message={error} retry={reload} />;
+  if (error || !data) return <PageError message={error} retry={reload} />;
+  const authors = [...new Set(data.reports.map((report) => report.author))].sort();
+  const assignees = [...new Set(data.reports.map((report) => report.assignee).filter(Boolean) as string[])].sort();
 
-  return <><div className="page-heading"><div><p className="eyebrow">Incidencias y mejoras</p><h1>Reportes</h1></div><button className="button button-primary button-inline" onClick={() => setCreating(true)}><Plus size={17} />Nuevo reporte</button></div>
-    <section className="panel"><div className="toolbar"><label className="search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por título, autor o ID" aria-label="Buscar reportes" /></label><select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filtrar por estado"><option value="">Todos los estados</option>{statuses.map((item) => <option key={item}>{item}</option>)}</select></div>
-      {filtered.length === 0 ? <EmptyState>No hay reportes que coincidan con los filtros.</EmptyState> : <div className="table-wrap"><table><thead><tr><th>ID</th><th>Reporte</th><th>Tipo</th><th>Prioridad</th><th>Estado</th><th>Responsable</th></tr></thead><tbody>{filtered.map((report) => <tr key={report.id} onClick={() => setSelected(report)}><td className="mono">{report.id}</td><td><strong>{report.title}</strong><small>por {report.author}</small></td><td><StatusBadge value={report.type} /></td><td><StatusBadge value={report.priority} /></td><td><StatusBadge value={report.status} /></td><td>{report.assignee || "—"}</td></tr>)}</tbody></table></div>}
+  return <>
+    <div className="page-heading"><div><p className="eyebrow">Incidencias y mejoras</p><h1>Reportes <span className="heading-count">{filtered.length}</span></h1><p className="heading-copy">Encontrá, priorizá y resolvé cada incidencia con todo su contexto.</p></div><button className="button button-primary button-inline" onClick={() => setCreating(true)}><Plus size={17}/>Nuevo reporte</button></div>
+    {presets.length ? <div className="preset-row"><span>Vistas guardadas</span>{presets.map((preset) => <button key={preset.name} onClick={() => setFilters(preset.filters)}><Bookmark size={13}/>{preset.name}</button>)}</div> : null}
+    <section className="panel reports-panel"><div className="toolbar report-toolbar"><label className="search-box"><Search size={17}/><input value={filters.query || ""} onChange={(event) => setFilter("query", event.target.value)} placeholder="Buscar por título, autor, responsable o ID" aria-label="Buscar reportes"/></label><select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="Ordenar reportes"><option value="updated">Actualizados recientemente</option><option value="oldest">Más antiguos</option><option value="priority">Mayor prioridad</option><option value="title">Título A–Z</option></select></div>
+      <div className="filter-bar"><select value={filters.status || ""} onChange={(event) => setFilter("status", event.target.value)}><option value="">Todos los estados</option>{statuses.map((item) => <option key={item}>{item}</option>)}</select><select value={filters.priority || ""} onChange={(event) => setFilter("priority", event.target.value)}><option value="">Todas las prioridades</option>{priorities.map((item) => <option key={item}>{item}</option>)}</select><select value={filters.type || ""} onChange={(event) => setFilter("type", event.target.value)}><option value="">Todos los tipos</option>{types.map((item) => <option key={item}>{item}</option>)}</select><select value={filters.author || ""} onChange={(event) => setFilter("author", event.target.value)}><option value="">Todos los autores</option>{authors.map((item) => <option key={item}>{item}</option>)}</select><select value={filters.assignee || ""} onChange={(event) => setFilter("assignee", event.target.value)}><option value="">Todos los responsables</option>{assignees.map((item) => <option key={item}>{item}</option>)}</select><button className="filter-action" onClick={savePreset}><Bookmark size={14}/>Guardar vista</button>{activeCount ? <button className="filter-action clear" onClick={() => setFilters({})}><X size={14}/>Limpiar {activeCount}</button> : null}</div>
+      {filtered.length === 0 ? <EmptyState>No hay reportes que coincidan con los filtros.</EmptyState> : <div className="table-wrap"><table><thead><tr><th>Reporte</th><th>Tipo</th><th>Prioridad</th><th>Estado</th><th>Responsable</th><th>Actividad</th></tr></thead><tbody>{filtered.map((report) => <tr key={report.id} onClick={() => setSelected(report)}><td><strong>{report.title}</strong><small>{report.id} · por {report.author}</small></td><td><StatusBadge value={report.type}/></td><td><StatusBadge value={report.priority}/></td><td><StatusBadge value={report.status}/></td><td>{report.assignee || <span className="muted">Sin asignar</span>}</td><td>{relativeTime(report.updatedAt)}</td></tr>)}</tbody></table></div>}
     </section>
-    {creating ? <CreateReportModal token={token} onClose={() => setCreating(false)} onCreated={async () => { setCreating(false); await reload(); }} /> : null}
-    {selected ? <ReportDetail token={token} user={user} initial={selected} onClose={closeDetail} onChanged={async () => { await reload(); }} /> : null}
+    {creating ? <CreateReportModal token={token} onClose={() => setCreating(false)} onCreated={async () => { setCreating(false); await reload(); }}/> : null}
+    {selected ? <ReportDetail token={token} user={user} users={data.users} initial={selected} onClose={closeDetail} onChanged={reload}/> : null}
   </>;
 }
 
 function CreateReportModal({ token, onClose, onCreated }: { token: string; onClose: () => void; onCreated: () => Promise<void> }) {
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setBusy(true); setError("");
-    const values = Object.fromEntries(new FormData(event.currentTarget));
-    try { await api<Report>("/reports", token, { method: "POST", body: values }); await onCreated(); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "No se pudo crear el reporte."); }
-    finally { setBusy(false); }
-  }
-  return <Modal title="Nuevo reporte" onClose={onClose}><form className="form-grid" onSubmit={submit}>{error ? <div className="form-error full" role="alert">{error}</div> : null}<label className="full">Título<input name="title" required maxLength={120} autoFocus /></label><label>Tipo<select name="type">{types.map((item) => <option key={item}>{item}</option>)}</select></label><label>Prioridad<select name="priority" defaultValue="Media">{priorities.map((item) => <option key={item}>{item}</option>)}</select></label><label className="full">Descripción<textarea name="description" rows={6} required /></label><label className="full">Evidencia URL<input name="evidence" type="url" placeholder="https://…" /></label><div className="modal-actions full"><button className="button" type="button" onClick={onClose}>Cancelar</button><button className="button button-primary button-inline" disabled={busy}>{busy ? "Creando…" : "Crear reporte"}</button></div></form></Modal>;
+  const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
+  async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setBusy(true); setError(""); const fields = new FormData(event.currentTarget); try { const report = await api<Report>("/reports", token, { method: "POST", body: { title: fields.get("title"), type: fields.get("type"), priority: fields.get("priority"), description: fields.get("description"), evidence: fields.get("evidence") } }); const files = fields.getAll("images").filter((item): item is File => item instanceof File && item.size > 0); for (const file of files) { await api(`/reports/${report.id}/attachments`, token, { method: "POST", body: { url: await imageToDataUrl(file), name: file.name } }); } await onCreated(); } catch (reason) { setError(reason instanceof Error ? reason.message : "No se pudo crear el reporte."); } finally { setBusy(false); } }
+  return <Modal title="Nuevo reporte" onClose={onClose}><form className="form-grid" onSubmit={submit}>{error ? <div className="form-error full" role="alert">{error}</div> : null}<label className="full">Título<input name="title" required maxLength={120} autoFocus placeholder="Describí el problema en una frase"/></label><label>Tipo<select name="type">{types.map((item) => <option key={item}>{item}</option>)}</select></label><label>Prioridad<select name="priority" defaultValue="Media">{priorities.map((item) => <option key={item}>{item}</option>)}</select></label><label className="full">Descripción<textarea name="description" rows={6} required placeholder="Qué ocurrió, cómo reproducirlo y cuál era el resultado esperado"/></label><label className="full">Evidencia URL<input name="evidence" type="url" placeholder="https://…"/></label><label className="full file-field"><ImagePlus size={18}/><span>Adjuntar capturas <small>PNG, JPG, GIF o WebP · máximo 350 KB cada una</small></span><input name="images" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple/></label><div className="modal-actions full"><button className="button" type="button" onClick={onClose}>Cancelar</button><button className="button button-primary button-inline" disabled={busy}>{busy ? "Creando…" : "Crear reporte"}</button></div></form></Modal>;
 }
 
-function ReportDetail({ token, user, initial, onClose, onChanged }: { token: string; user: User; initial: Report; onClose: () => void; onChanged: () => Promise<void> }) {
-  const [report, setReport] = useState(initial);
-  const [comment, setComment] = useState("");
-  const canEdit = user.role === "CEO" || user.role === "Developer";
+function ReportDetail({ token, user, users, initial, onClose, onChanged }: { token: string; user: User; users: User[]; initial: Report; onClose: () => void; onChanged: () => Promise<unknown> }) {
+  const [report, setReport] = useState(initial); const [comment, setComment] = useState(""); const [busy, setBusy] = useState(false); const canEdit = user.role === "CEO" || user.role === "Developer"; const developers = users.filter((item) => item.role === "Developer");
   async function refresh() { setReport(await api<Report>(`/reports/${report.id}`, token)); await onChanged(); }
-  async function updateStatus(next: string) { await api(`/reports/${report.id}/status`, token, { method: "PUT", body: { status: next } }); await refresh(); }
-  async function assign() { await api(`/reports/${report.id}/assign`, token, { method: "POST", body: {} }); await refresh(); }
+  async function updateStatus(next: string) { setBusy(true); try { await api(`/reports/${report.id}/status`, token, { method: "PUT", body: { status: next } }); await refresh(); } finally { setBusy(false); } }
+  async function assign(username?: string) { await api(`/reports/${report.id}/assign`, token, { method: "POST", body: username ? { username } : {} }); await refresh(); }
+  async function follow() { await api(`/reports/${report.id}/follow`, token, { method: "POST" }); await refresh(); }
   async function addComment(event: FormEvent) { event.preventDefault(); if (!comment.trim()) return; await api(`/reports/${report.id}/comments`, token, { method: "POST", body: { text: comment } }); setComment(""); await refresh(); }
+  async function upload(event: ChangeEvent<HTMLInputElement>) { const file = event.target.files?.[0]; if (!file) return; try { await api(`/reports/${report.id}/attachments`, token, { method: "POST", body: { url: await imageToDataUrl(file), name: file.name } }); await refresh(); } catch (reason) { alert(reason instanceof Error ? reason.message : "No se pudo adjuntar la imagen."); } event.target.value = ""; }
   async function remove() { if (!confirm("¿Eliminar este reporte permanentemente?")) return; await api(`/reports/${report.id}`, token, { method: "DELETE" }); await onChanged(); onClose(); }
-  return <Modal title={`${report.id} · ${report.title}`} onClose={onClose} wide><div className="report-detail"><div className="detail-main"><section><p className="section-label">Descripción</p><p className="description">{report.description}</p>{report.evidence ? <a href={report.evidence} target="_blank" rel="noreferrer">Abrir evidencia ↗</a> : null}</section><section><p className="section-label"><MessageSquare size={14} /> Comentarios ({report.comments?.length || 0})</p><div className="comment-list">{report.comments?.length ? report.comments.map((item) => <article className="comment" key={item.id}><strong>{item.author}</strong><time>{new Date(item.createdAt).toLocaleString("es")}</time><p>{item.text}</p></article>) : <span className="muted">Sin comentarios.</span>}</div><form className="comment-form" onSubmit={addComment}><textarea value={comment} onChange={(event) => setComment(event.target.value)} rows={2} placeholder="Escribí un comentario" /><button className="button">Comentar</button></form></section></div><aside className="detail-aside"><div><span>Estado</span>{canEdit ? <select value={report.status} onChange={(event) => void updateStatus(event.target.value)}>{statuses.map((item) => <option key={item}>{item}</option>)}</select> : <StatusBadge value={report.status} />}</div><div><span>Prioridad</span><StatusBadge value={report.priority} /></div><div><span>Tipo</span><StatusBadge value={report.type} /></div><div><span>Autor</span><strong>{report.author}</strong></div><div><span>Responsable</span><strong>{report.assignee || "Sin asignar"}</strong></div>{user.role === "Developer" ? <button className="button button-inline" onClick={() => void assign()}><UserPlus size={16} />Asignarme</button> : null}{user.role === "CEO" ? <button className="button button-danger button-inline" onClick={() => void remove()}><Trash2 size={16} />Eliminar</button> : null}</aside></div></Modal>;
+  const nextStatus = statuses[Math.min(statuses.length - 1, statuses.indexOf(report.status) + 1)]; const following = report.followers?.includes(user.name) || report.followers?.includes(user.username);
+  const history = [...(report.history || [])].reverse();
+  return <Modal title={`${report.id} · ${report.title}`} onClose={onClose} wide><div className="report-quickbar">{canEdit && nextStatus !== report.status ? <button className="button button-primary" disabled={busy} onClick={() => void updateStatus(nextStatus)}>Mover a {nextStatus}</button> : null}<button className="button button-inline" onClick={() => void follow()}><Bell size={15}/>{following ? "Dejar de seguir" : "Seguir reporte"}</button></div><div className="report-detail"><div className="detail-main"><section><p className="section-label">Descripción</p><p className="description">{report.description}</p>{report.evidence ? <a href={report.evidence} target="_blank" rel="noreferrer" className="evidence-link"><ExternalLink size={15}/>Abrir evidencia</a> : null}<div className="attachment-grid">{report.attachments?.map((item) => <a href={item.url} target="_blank" rel="noreferrer" key={item.id}><img src={item.url} alt={item.name}/><span>{item.name}</span></a>)}<label className="attachment-upload"><ImagePlus size={21}/><span>Añadir captura</span><input type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={(event) => void upload(event)}/></label></div></section><section><p className="section-label"><MessageSquare size={14}/>Comentarios ({report.comments?.length || 0})</p><div className="comment-list">{report.comments?.length ? report.comments.map((item) => <article className="comment" key={item.id}><strong>{item.author}</strong><time>{new Date(item.createdAt).toLocaleString("es")}</time><p>{item.text}</p></article>) : <span className="muted">Sin comentarios.</span>}</div><form className="comment-form" onSubmit={addComment}><textarea value={comment} onChange={(event) => setComment(event.target.value)} rows={2} placeholder="Escribí un comentario"/><button className="button">Comentar</button></form></section><section><p className="section-label">Historial de actividad</p><div className="history-list">{history.map((item, index) => <article key={`${item.date}-${index}`}><i/><div><strong>{item.user}</strong> {item.action}{item.to ? <span> · {item.from || "—"} → <b>{item.to}</b></span> : null}<time>{new Date(item.date).toLocaleString("es")}</time></div></article>)}</div></section></div><aside className="detail-aside"><div><span>Estado</span>{canEdit ? <select value={report.status} disabled={busy} onChange={(event) => void updateStatus(event.target.value)}>{statuses.map((item) => <option key={item}>{item}</option>)}</select> : <StatusBadge value={report.status}/>}</div><div><span>Prioridad</span><StatusBadge value={report.priority}/></div><div><span>Tipo</span><StatusBadge value={report.type}/></div><div><span>Autor</span><strong>{report.author}</strong></div><div><span>Responsable</span>{user.role === "CEO" ? <select value={report.assignee || ""} onChange={(event) => event.target.value && void assign(event.target.value)}><option value="">Sin asignar</option>{developers.map((developer) => <option key={developer.id} value={developer.name}>{developer.name}</option>)}</select> : <strong>{report.assignee || "Sin asignar"}</strong>}</div>{user.role === "Developer" && report.assignee !== user.name ? <button className="button button-inline" onClick={() => void assign()}><UserPlus size={16}/>Asignarme</button> : null}{user.role === "CEO" ? <button className="button button-danger button-inline" onClick={() => void remove()}><Trash2 size={16}/>Eliminar</button> : null}</aside></div></Modal>;
 }
+
+async function imageToDataUrl(file: File) { if (file.size > 350_000) throw new Error(`${file.name} supera el máximo de 350 KB.`); if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type)) throw new Error("Formato de imagen no permitido."); return new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error("No se pudo leer la imagen.")); reader.readAsDataURL(file); }); }
