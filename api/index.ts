@@ -1,13 +1,9 @@
-import { Redis } from "@upstash/redis";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { webcrypto } from "node:crypto";
 
-let redis: Redis | null = null;
-try {
-  redis = Redis.fromEnv();
-} catch {
-  // Upstash Redis not configured — will use in-memory fallback
-}
+const redisUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || "";
+const redisToken = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || "";
+const hasRedis = Boolean(redisUrl && redisToken);
 
 const STATE_KEY = "samp-tracker-state";
 
@@ -101,10 +97,23 @@ let state: AppState = JSON.parse(JSON.stringify(DEFAULT_STATE));
 
 // ─── KV PERSISTENCE ────────────────────────────────────────────────
 
+async function redisCommand(command: unknown[]) {
+  const response = await fetch(redisUrl, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${redisToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify(command),
+  });
+  if (!response.ok) throw new Error(`Redis respondió ${response.status}`);
+  const payload = await response.json() as { result?: unknown; error?: string };
+  if (payload.error) throw new Error(payload.error);
+  return payload.result;
+}
+
 async function loadState() {
-  if (!redis) return;
+  if (!hasRedis) return;
   try {
-    const saved = await redis.get<AppState>(STATE_KEY);
+    const raw = await redisCommand(["GET", STATE_KEY]);
+    const saved = typeof raw === "string" ? JSON.parse(raw) as AppState : raw as AppState | null;
     if (saved && typeof saved === "object") {
       state = saved;
       const changed = safeInit(state);
@@ -116,9 +125,9 @@ async function loadState() {
 }
 
 async function saveState() {
-  if (!redis) return;
+  if (!hasRedis) return;
   try {
-    await redis.set(STATE_KEY, state);
+    await redisCommand(["SET", STATE_KEY, JSON.stringify(state)]);
   } catch {
     // ignore write errors
   }
