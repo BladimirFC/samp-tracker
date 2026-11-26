@@ -3,7 +3,7 @@ import { useState, type FormEvent } from "react";
 import { api } from "../lib/api";
 import type { Session, User } from "../types";
 
-export function AuthPage({ onAuthenticated }: { onAuthenticated: (session: Session) => void }) {
+export function AuthPage({ onAuthenticated, notice = "" }: { onAuthenticated: (session: Session) => void; notice?: string }) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -45,7 +45,7 @@ export function AuthPage({ onAuthenticated }: { onAuthenticated: (session: Sessi
           <p className="eyebrow">Acceso al tracker</p>
           <h2>{mode === "login" ? "Bienvenido de vuelta" : "Crear una cuenta"}</h2>
           <p className="muted">{mode === "login" ? "Ingresá para continuar con tu equipo." : "Tu cuenta comenzará con el rol Tester."}</p>
-          {error ? <div className="form-error" role="alert">{error}</div> : null}
+          {error || notice ? <div className="form-error" role="alert">{error || notice}</div> : null}
           {mode === "register" ? <label>Nombre visible<input name="name" autoComplete="name" required /></label> : null}
           <label>Usuario<input name="username" autoComplete="username" required /></label>
           <label>Contraseña<input name="password" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={6} required /></label>

@@ -109,8 +109,15 @@ async function redisCommand(command: unknown[]) {
   return payload.result;
 }
 
+class StorageUnavailable extends Error {
+  constructor() { super("El almacenamiento del tracker no está disponible. Inténtalo de nuevo."); }
+}
+
 async function loadState() {
-  if (!hasRedis) return;
+  if (!hasRedis) {
+    if (process.env.VERCEL === "1") throw new StorageUnavailable();
+    return;
+  }
   try {
     const raw = await redisCommand(["GET", STATE_KEY]);
     const saved = typeof raw === "string" ? JSON.parse(raw) as AppState : raw as AppState | null;
@@ -118,18 +125,25 @@ async function loadState() {
       state = saved;
       const changed = safeInit(state);
       if (changed) await saveState();
+    } else if (process.env.VERCEL === "1") {
+      throw new StorageUnavailable();
     }
   } catch {
-    // KV not available — use defaults
+    console.error("[tracker] Could not read persistent state");
+    throw new StorageUnavailable();
   }
 }
 
 async function saveState() {
-  if (!hasRedis) return;
+  if (!hasRedis) {
+    if (process.env.VERCEL === "1") throw new StorageUnavailable();
+    return;
+  }
   try {
     await redisCommand(["SET", STATE_KEY, JSON.stringify(state)]);
   } catch {
-    // ignore write errors
+    console.error("[tracker] Could not persist state");
+    throw new StorageUnavailable();
   }
 }
 
@@ -176,7 +190,7 @@ function getKvSettings() { return state.kvSettings; }
 // ─── HELPERS ──────────────────────────────────────────────────────
 
 function r(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
+  return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
 }
 function nf() { return r({ error: "Not found" }, 404); }
 function unauthorized() { return r({ error: "Sesión requerida." }, 401); }
@@ -479,7 +493,7 @@ async function hDiscordCallback(req: Request) {
       }
     }
 
-    saveState();
+    await saveState();
 
     // Generate session token
     const token = createSessionToken(user!);
@@ -493,6 +507,7 @@ async function hDiscordCallback(req: Request) {
       headers: { Location: redirectUrl },
     });
   } catch (e: unknown) {
+    if (e instanceof StorageUnavailable) return r({ error: e.message }, 503);
     return r({ error: e instanceof Error ? e.message : "Error en OAuth de Discord." }, 500);
   }
 }
@@ -595,7 +610,6 @@ function hCreateReport(b: Record<string, unknown>) {
   reports.push(report);
   addNotif("new_report", `Nuevo reporte ${id}: ${title}`, id, author);
   users.filter(u => u.role === "CEO").forEach(u => addNotif("new_report", `Nuevo reporte ${id}: ${title} por ${author}`, id, u.username));
-  saveState();
   return r(report, 201);
 }
 
@@ -763,6 +777,16 @@ async function latestLauncherRelease(): Promise<Response> {
 }
 
 async function handleAll(req: Request): Promise<Response> {
+  try {
+    return await routeRequest(req);
+  } catch (error) {
+    if (error instanceof StorageUnavailable) return r({ error: error.message }, 503);
+    console.error("[tracker] Unexpected request error");
+    return r({ error: "No se pudo procesar la solicitud." }, 500);
+  }
+}
+
+async function routeRequest(req: Request): Promise<Response> {
   // Quick check: Discord bot endpoint (before loadState to avoid Redis delays)
   const probeUrl = new URL(req.url);
   const probePath = (probeUrl.searchParams.get("apipath") || "").split("/").filter(Boolean);
@@ -833,9 +857,12 @@ async function handleAll(req: Request): Promise<Response> {
     try { body = await req.json(); } catch { /* ignore */ }
   }
 
-  try {
+  const route = async (): Promise<Response> => {
     const user = requireUser(req);
     // Auth
+    if (path[0] === "auth" && path[1] === "session" && path.length === 2 && method === "GET") {
+      return user ? r(publicUser(user)) : unauthorized();
+    }
     if (path[0] === "register" && method === "POST") return hRegister(body);
     if (path[0] === "login" && method === "POST") return hLogin(body);
     // Discord OAuth
@@ -946,14 +973,14 @@ async function handleAll(req: Request): Promise<Response> {
       return hDeleteAttachment(path[1], parseInt(path[3]));
     }
     // Patches
-    if (path[0] === "patches" && path.length === 1 && method === "GET") return r(getPatches().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+    if (path[0] === "patches" && path.length === 1 && method === "GET") return user ? r(getPatches().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())) : unauthorized();
     if (path[0] === "patches" && path.length === 1 && method === "POST") {
       if (!user || !hasRole(user, "CEO", "Developer")) return user ? forbidden() : unauthorized();
       return hCreatePatch(body);
     }
     // Stats / Metrics
-    if (path[0] === "stats" && method === "GET") return hStats();
-    if (path[0] === "metrics" && method === "GET") return hMetrics();
+    if (path[0] === "stats" && method === "GET") return user ? hStats() : unauthorized();
+    if (path[0] === "metrics" && method === "GET") return user ? hMetrics() : unauthorized();
     // Notifications
     if (path[0] === "notifications" && path.length === 1 && method === "GET") {
       if (!user) return unauthorized();
@@ -975,13 +1002,13 @@ async function handleAll(req: Request): Promise<Response> {
     }
 
     return nf();
-  } catch (e: unknown) {
-    return r({ error: e instanceof Error ? e.message : "Error del servidor" }, 500);
-  } finally {
-    if (method === "POST" || method === "PUT" || method === "DELETE" || method === "PATCH") {
-      await saveState();
-    }
+  };
+  const response = await route();
+  // Failed requests and logins must never overwrite persistent data.
+  if (response.ok && ["POST", "PUT", "DELETE", "PATCH"].includes(method) && path[0] !== "login") {
+    await saveState();
   }
+  return response;
 }
 
 export { handleAll as GET, handleAll as POST, handleAll as PUT, handleAll as DELETE, handleAll as PATCH };
