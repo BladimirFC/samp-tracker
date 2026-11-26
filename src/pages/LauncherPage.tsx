@@ -21,6 +21,14 @@ function formatDate(date: string | null) {
   return new Intl.DateTimeFormat("es", { dateStyle: "long", timeZone: "UTC" }).format(new Date(date));
 }
 
+function ReleaseNotes({ notes, releaseUrl }: { notes: string; releaseUrl: string }) {
+  const lines = notes.split(/\r?\n/).map(line => line.trim()).filter(line => line && !/^\*\*Full Changelog\*\*:/i.test(line));
+  return <section className="launcher-release-notes" aria-labelledby="release-notes-heading">
+    <h3 id="release-notes-heading">¿Qué hay de nuevo?</h3>
+    {lines.length ? <ul>{lines.map((line, index) => <li key={index}>{line.replace(/^[-*]\s+|^\d+\.\s+/, "").replace(/^#{1,6}\s+/, "")}</li>)}</ul> : <p className="muted">Las novedades de esta versión todavía no se han publicado. Consulta la <a href={releaseUrl} target="_blank" rel="noopener noreferrer">publicación oficial</a>.</p>}
+  </section>;
+}
+
 export function LauncherPage() {
   const [release, setRelease] = useState<LauncherRelease | null>(null);
   const [loading, setLoading] = useState(true);
@@ -62,7 +70,7 @@ export function LauncherPage() {
             <a className="button button-primary launcher-download-button" href={release.installer.url}><Download size={20} /><span><strong>Descargar para Windows</strong><small>Instalador recomendado · {formatSize(release.installer.size)}</small></span></a>
             <p className="muted launcher-install-note">Instala una sola vez. Las próximas versiones se descargarán desde el launcher y se aplicarán tras confirmar el reinicio.</p>
             {release.portable && <a className="launcher-secondary-link" href={release.portable.url}>Versión ZIP · {formatSize(release.portable.size)}</a>}
-            {release.notes && <details className="launcher-release-notes"><summary>Notas de esta versión</summary><pre>{release.notes}</pre></details>}
+            <ReleaseNotes notes={release.notes} releaseUrl={release.releaseUrl} />
             <a className="launcher-secondary-link" href={release.releaseUrl} target="_blank" rel="noopener noreferrer">Ver publicación oficial <ExternalLink size={14} /></a>
             <button className="text-button launcher-refresh" type="button" onClick={() => setAttempt(n => n + 1)}><RefreshCw size={14} /> Comprobar versión</button>
           </>}

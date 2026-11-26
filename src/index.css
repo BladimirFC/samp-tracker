@@ -324,3 +324,9 @@ td small { color:var(--muted); margin-top:.25rem; }
 .launcher-release-notes pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:220px; overflow:auto; color:var(--muted); font:inherit; line-height:1.6; }
 .launcher-download-footer { color:var(--muted); border-top:1px solid var(--line); padding-top:1rem; font-size:.78rem; }
 @media(max-width:760px) { .launcher-download-layout { grid-template-columns:1fr; gap:2rem; padding:2.5rem 0; } .launcher-download-brand strong { font-size:.85rem; } .launcher-download-header a { font-size:.8rem; } .launcher-download-brand img { width:36px;height:36px; } }
+
+/* Show player-facing changes without requiring an extra click. */
+.launcher-release-notes h3 { margin:0 0 .75rem; font-size:1rem; color:var(--text); }
+.launcher-release-notes ul { margin:0; padding-left:1.15rem; display:grid; gap:.65rem; color:#d8d3e2; line-height:1.6; overflow-wrap:anywhere; }
+.launcher-release-notes li::marker { color:#a78bfa; }
+.launcher-release-notes p { line-height:1.6; }
