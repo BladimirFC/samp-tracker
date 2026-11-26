@@ -726,10 +726,47 @@ function hMetrics() {
 
 // ─── MAIN ROUTER ──────────────────────────────────────────────────
 
+// The public launcher feed is independent of tracker accounts and Redis.
+async function latestLauncherRelease(): Promise<Response> {
+  const base = "https://github.com/BladimirFC/legacy-launcher";
+  const failure = () => Response.json({ error: "No se pudo comprobar la última versión. Inténtalo de nuevo." }, { status: 503, headers: { "Cache-Control": "no-store" } });
+  try {
+    const response = await fetch("https://api.github.com/repos/BladimirFC/legacy-launcher/releases/latest", {
+      headers: { Accept: "application/vnd.github+json", "User-Agent": "Legacy-Tester-Tracker", "X-GitHub-Api-Version": "2022-11-28" },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) return failure();
+    const release = await response.json() as {
+      tag_name?: string; draft?: boolean; prerelease?: boolean; published_at?: string; body?: string;
+      assets?: Array<{ name: string; state: string; size: number; browser_download_url: string }>;
+    };
+    const tag = release.tag_name;
+    if (typeof tag !== "string" || !/^v\d+\.\d+\.\d+$/.test(tag) || release.draft !== false || release.prerelease !== false || !Array.isArray(release.assets)) return failure();
+    const version = tag.slice(1);
+    const getAsset = (name: string) => {
+      const url = base + "/releases/download/" + tag + "/" + name;
+      const asset = release.assets?.find(item => item.name === name && item.state === "uploaded" && Number.isSafeInteger(item.size) && item.size > 0 && item.browser_download_url === url);
+      return asset ? { name, url, size: asset.size } : null;
+    };
+    const installer = getAsset("Legacy-Launcher-" + version + "-Setup.exe");
+    const portable = getAsset("Legacy-Launcher-" + version + "-Windows-x64.zip");
+    const manifest = getAsset("latest.yml");
+    const blockmap = getAsset("Legacy-Launcher-" + version + "-Setup.exe.blockmap");
+    if (!installer || !manifest || !blockmap) return failure();
+    return Response.json({
+      version, publishedAt: release.published_at || null, notes: typeof release.body === "string" ? release.body.slice(0, 12000) : "",
+      releaseUrl: base + "/releases/tag/" + tag, installer, portable,
+    }, { headers: { "Cache-Control": "public, max-age=0, must-revalidate", "CDN-Cache-Control": "public, s-maxage=60, stale-while-revalidate=120" } });
+  } catch {
+    return failure();
+  }
+}
+
 async function handleAll(req: Request): Promise<Response> {
   // Quick check: Discord bot endpoint (before loadState to avoid Redis delays)
   const probeUrl = new URL(req.url);
   const probePath = (probeUrl.searchParams.get("apipath") || "").split("/").filter(Boolean);
+  if (probePath.join("/") === "launcher/latest" && req.method === "GET") return latestLauncherRelease();
 
   if (probePath[0] === "discord-bot" && req.method === "POST") {
     try {

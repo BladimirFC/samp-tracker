@@ -1,4 +1,4 @@
-import { Bug, CheckCircle2, ShieldCheck } from "lucide-react";
+import { Bug, CheckCircle2, Download, ShieldCheck } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { api } from "../lib/api";
 import type { Session, User } from "../types";
@@ -37,6 +37,7 @@ export function AuthPage({ onAuthenticated }: { onAuthenticated: (session: Sessi
         <p className="eyebrow">Development control center</p>
         <h1>Los problemas claros se convierten en <em>mejores versiones.</em></h1>
         <p>Centralizá reportes, responsables y entregas del servidor en un solo lugar.</p>
+        <a className="button button-inline launcher-auth-link" href="/launcher"><Download size={17} /> Descargar Legacy Launcher</a>
         <div className="auth-benefits"><span><Bug size={17} /> Seguimiento preciso</span><span><CheckCircle2 size={17} /> Flujo verificable</span><span><ShieldCheck size={17} /> Roles definidos</span></div>
       </section>
       <section className="auth-panel">

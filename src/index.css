@@ -289,3 +289,38 @@ td small { color:var(--muted); margin-top:.25rem; }
 .sidebar-scrim { display:none; }
 @media(max-width:1180px){.kpi-grid{grid-template-columns:repeat(2,1fr)}.analytics-grid,.secondary-analytics{grid-template-columns:1fr}.stats-grid{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:760px){.auth-page{grid-template-columns:1fr}.auth-hero{display:none}.auth-panel{padding:1.5rem}.sidebar{transform:translateX(-100%);transition:.2s}.sidebar-open{transform:none}.mobile-close,.mobile-menu{display:block}.sidebar-scrim{display:block;position:fixed;inset:0;background:#0009;border:0;z-index:19}.main-content{margin-left:0}.topbar,.page-content{padding-left:1rem;padding-right:1rem}.global-search-trigger{width:38px;justify-content:center}.global-search-trigger>span,.global-search-trigger kbd,.topbar-path span{display:none}.kpi-grid{grid-template-columns:1fr}.stats-grid{grid-template-columns:repeat(2,1fr)}.page-heading{align-items:flex-start;flex-direction:column}.toolbar{flex-direction:column}.report-toolbar select{width:100%}.filter-bar select,.filter-action{flex:1;min-width:140px}.attention-strip{align-items:flex-start;gap:.7rem;flex-direction:column}.workload-list{grid-template-columns:1fr}.distribution-row{grid-template-columns:110px 1fr 25px}.form-grid,.report-detail{grid-template-columns:1fr}.detail-aside{border-left:0;border-top:1px solid var(--line)}.comment-form{grid-template-columns:1fr}.tag-form{grid-template-columns:1fr 48px}.tag-form .button{grid-column:1/-1}.permission-grid,.profile-kpis{grid-template-columns:1fr}.kanban-filters>span{width:100%;margin:0}.notification-panel{position:fixed;top:72px;right:1rem}.report-quickbar{align-items:stretch}.report-quickbar .button{flex:1}}
+
+
+/* Official tester launcher distribution page. */
+.launcher-auth-link { align-self:flex-start; color:var(--text); text-decoration:none; margin-top:1rem; }
+.sidebar nav .launcher-nav-link { display:flex; align-items:center; gap:.75rem; padding:.75rem; margin:.15rem 0; border-radius:8px; color:var(--muted); text-decoration:none; font-size:.875rem; }
+.sidebar nav .launcher-nav-link:hover { color:var(--text); background:#ffffff0a; }
+.launcher-download-page { max-width:1180px; margin:0 auto; padding:clamp(1rem,4vw,3rem); min-height:100vh; display:flex; flex-direction:column; }
+.launcher-download-header { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding-bottom:1.25rem; border-bottom:1px solid var(--line); }
+.launcher-download-header a { text-decoration:none; color:var(--text); }
+.launcher-download-brand { display:flex; align-items:center; gap:.7rem; }
+.launcher-download-brand img { width:48px; height:48px; object-fit:contain; }
+.launcher-download-layout { flex:1; display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr); align-items:center; gap:clamp(2rem,6vw,5rem); padding:clamp(3rem,8vw,7rem) 0; }
+.launcher-test-label { display:inline-flex; align-items:center; gap:.5rem; padding:.5rem .8rem; border:1px solid #8b5cf655; background:#8b5cf618; border-radius:999px; font-size:.72rem; font-weight:700; color:#c4b5fd; letter-spacing:.08em; margin-bottom:1.75rem; }
+.launcher-intro h1 { font-size:clamp(3rem,7vw,6rem); line-height:.95; margin-bottom:1.5rem; }
+.launcher-intro h1 em { color:#a78bfa; font-style:normal; }
+.launcher-lead { max-width:34rem; color:#c2c1cf; font-size:1.05rem; line-height:1.7; }
+.launcher-requirements { display:flex; gap:.8rem; align-items:center; margin:1.5rem 0; }
+.launcher-requirements svg { flex-shrink:0; color:#a78bfa; }
+.launcher-requirements div { display:grid; gap:.4rem; }
+.launcher-requirements span,.launcher-test-warning { font-size:.85rem; line-height:1.6; }
+.launcher-release-card { min-width:0; display:grid; gap:.9rem; border:1px solid #8b5cf655; background:linear-gradient(145deg,#191325,var(--surface) 70%); padding:clamp(1.25rem,3vw,2rem); border-radius:18px; }
+.launcher-release-card h2 { font:700 clamp(2rem,5vw,3rem) Inter,sans-serif; letter-spacing:-.04em; margin:0; }
+.launcher-release-card p { margin:0; }
+.launcher-download-button { display:flex; align-items:center; justify-content:center; gap:.8rem; min-height:68px; text-decoration:none; color:white; text-align:left; }
+.launcher-download-button span { display:grid; gap:.3rem; }
+.launcher-download-button small { font-size:.76rem; font-weight:500; color:#f0eaff; }
+.launcher-install-note,.launcher-security-note { font-size:.78rem; line-height:1.6; }
+.launcher-security-note { border-top:1px solid var(--line); padding-top:1rem; color:var(--muted); }
+.launcher-secondary-link,.launcher-refresh { display:flex; align-items:center; justify-content:flex-start; gap:.5rem; color:#c4b5fd; font-size:.85rem; text-decoration:none; padding:.3rem 0; }
+.launcher-secondary-link:hover { text-decoration:underline; }
+.launcher-release-notes { border-top:1px solid var(--line); padding:.75rem 0; font-size:.85rem; }
+.launcher-release-notes summary { cursor:pointer; }
+.launcher-release-notes pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:220px; overflow:auto; color:var(--muted); font:inherit; line-height:1.6; }
+.launcher-download-footer { color:var(--muted); border-top:1px solid var(--line); padding-top:1rem; font-size:.78rem; }
+@media(max-width:760px) { .launcher-download-layout { grid-template-columns:1fr; gap:2rem; padding:2.5rem 0; } .launcher-download-brand strong { font-size:.85rem; } .launcher-download-header a { font-size:.8rem; } .launcher-download-brand img { width:36px;height:36px; } }

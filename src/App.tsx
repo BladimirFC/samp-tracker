@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AppShell } from "./components/AppShell";
 import { api, loadSession, saveSession } from "./lib/api";
 import { AuthPage } from "./pages/AuthPage";
+import { LauncherPage } from "./pages/LauncherPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { KanbanPage } from "./pages/KanbanPage";
 import { PatchesPage } from "./pages/PatchesPage";
@@ -35,6 +36,7 @@ export default function App() {
 
   useEffect(() => { saveSession(session); }, [session]);
   useEffect(() => { const onPopState = () => setPage(pageFromPath()); window.addEventListener("popstate", onPopState); return () => window.removeEventListener("popstate", onPopState); }, []);
+  if (window.location.pathname.replace(/\/$/, "") === "/launcher") return <LauncherPage />;
   if (!session) return <AuthPage onAuthenticated={setSession} />;
   const activeSession = session;
 

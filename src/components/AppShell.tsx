@@ -1,4 +1,4 @@
-import { BarChart3, Bug, Command, Kanban, LogOut, Menu, PackageCheck, Search, Settings, Users, X } from "lucide-react";
+import { BarChart3, Bug, Command, Download, Kanban, LogOut, Menu, PackageCheck, Search, Settings, Users, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import type { Page, Report, User } from "../types";
 import { GlobalSearch } from "./GlobalSearch";
@@ -41,6 +41,7 @@ export function AppShell({ token, user, page, onNavigate, onLogout, onOpenReport
             const Icon = item.icon;
             return <button key={item.id} className={page === item.id ? "nav-active" : ""} type="button" onClick={() => navigate(item.id)}><Icon size={18} /><span>{item.label}</span></button>;
           })}
+          <a className="launcher-nav-link" href="/launcher"><Download size={18} /><span>Descargar launcher</span></a>
         </nav>
         <div className="sidebar-user">
           <div className="avatar">{user.avatar ? <img src={user.avatar} alt="" /> : user.name.slice(0, 1).toUpperCase()}</div>
