@@ -1,8 +1,13 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { webcrypto } from "node:crypto";
 
-const redisUrl = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || "";
-const redisToken = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || "";
+// Prefer the restored Vercel integration. Never mix credentials from different stores.
+const redisPairs = [
+  [process.env.LEGACY_REDIS_KV_REST_API_URL, process.env.LEGACY_REDIS_KV_REST_API_TOKEN],
+  [process.env.KV_REST_API_URL, process.env.KV_REST_API_TOKEN],
+  [process.env.UPSTASH_REDIS_REST_URL, process.env.UPSTASH_REDIS_REST_TOKEN],
+];
+const [redisUrl, redisToken] = redisPairs.find(([url, token]) => url && token) || ["", ""];
 const hasRedis = Boolean(redisUrl && redisToken);
 
 const STATE_KEY = "samp-tracker-state";
