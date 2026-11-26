@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-process.env.KV_REST_API_URL = "https://redis.test";
-process.env.KV_REST_API_TOKEN = "test-only";
+// Isolate tests from deployment credentials and exercise the preferred integration.
+process.env.LEGACY_REDIS_KV_REST_API_URL = "https://redis.test";
+process.env.LEGACY_REDIS_KV_REST_API_TOKEN = "test-only";
+process.env.KV_REST_API_URL = "https://old-redis.test";
+process.env.KV_REST_API_TOKEN = "old-test-only";
 process.env.VERCEL = "1";
 
 test("sessions survive persistent state reloads and fail safely", async () => {
